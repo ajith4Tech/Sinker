@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ExtractEvent, ExtractSummary, WorksheetPreview } from "@/lib/types";
+import type { ExtractEvent, ExtractSummary, ValidationResult, WorkbookModel } from "@/lib/types";
 
 const TEMP_ROOT = path.join(process.cwd(), "temp");
 const UPLOADS_ROOT = path.join(TEMP_ROOT, "uploads");
@@ -109,7 +109,9 @@ interface ParserSummaryEvent {
   type: "summary";
   summary: ExtractSummary;
   hadErrors: boolean;
-  preview: WorksheetPreview;
+  workbook: WorkbookModel;
+  validation: ValidationResult;
+  newRowNumbers: number[];
 }
 
 async function* runParserProcess(
@@ -139,14 +141,16 @@ async function* runParserProcess(
 
     if (event.type === "summary") {
       sawTerminalEvent = true;
-      const { summary, hadErrors, preview } = event as unknown as ParserSummaryEvent;
+      const { summary, hadErrors, workbook, validation, newRowNumbers } = event as unknown as ParserSummaryEvent;
       yield {
         type: "done",
         summary,
         downloadUrl: `/api/download/${runId}/workbook.xlsx`,
         errorReportUrl: hadErrors ? `/api/download/${runId}/errors.csv` : null,
         templateUsed,
-        preview,
+        workbook,
+        validation,
+        newRowNumbers,
       };
     } else if (event.type === "fatal" || event.type === "totals" || event.type === "file") {
       sawTerminalEvent = sawTerminalEvent || event.type === "fatal";

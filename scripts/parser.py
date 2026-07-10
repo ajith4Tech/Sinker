@@ -3,7 +3,7 @@
 Next.js backend (see lib/run-extract.ts).
 
 Usage:
-    python3 parser.py <path-to-manifest.json>
+    python3 parser.py <path-to-manifest.json> [--debug]
 
 The manifest (written by Node) is a JSON object:
     {
@@ -16,8 +16,8 @@ The manifest (written by Node) is a JSON object:
     }
 
 Behavior, matching the performance/error-handling requirements:
-  - PDF text extraction + field parsing happens in a worker-process pool —
-    the only parallel part.
+  - PDF parsing (pdfplumber table extraction + field extraction) happens in
+    a worker-process pool — the only parallel part.
   - The workbook is loaded once, the duplicate-detection HashSet is built
     once, and the workbook is saved exactly once at the end — all of this
     happens sequentially in this main process (openpyxl workbooks aren't
@@ -25,6 +25,18 @@ Behavior, matching the performance/error-handling requirements:
   - One NDJSON event is printed per finished PDF (flush=True) plus a running
     totals event, so Node can stream live progress to the browser.
   - A single PDF failing is recorded and never aborts the batch.
+  - The preview sent to the frontend is built by reading the *saved* .xlsx
+    back with openpyxl (see workbook_reader.py) — never from parser JSON —
+    so what's shown can never drift from what's downloaded.
+  - --debug (developer-only, never wired to the web UI) prints, to stderr,
+    every field this run extracted or failed to: label pattern used,
+    matched text, extracted value, and the workbook cell it landed in (or,
+    on failure, the reason and surrounding context). See _print_debug_log.
+
+Verification: after saving, every LineRecord actually written is checked
+against the workbook cells it should have produced (see verify.py) — any
+missing/incorrect/shifted value fails the run loudly instead of shipping a
+silently-wrong workbook.
 """
 
 from __future__ import annotations
@@ -37,8 +49,13 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from excel_writer import ExcelWriter
+from line_records import build_line_records
+from models import ShippingBillResult
 from shipping_bill_parser import ShippingBillParser
-from utils import discover_pdf_paths, extract_pdf_text, unique_key
+from template_schema import ATTRS, COLUMNS, INVOICE_COL, ITEM_COL, SHIPPING_BILL_COL
+from utils import discover_pdf_paths
+from verify import verify_workbook
+from workbook_reader import read_workbook
 
 
 def _parse_one(path: str) -> dict:
@@ -46,8 +63,7 @@ def _parse_one(path: str) -> dict:
     failures are captured and reported back to the main process instead."""
     start = time.monotonic()
     try:
-        text = extract_pdf_text(path)
-        result = ShippingBillParser().parse(text)
+        result = ShippingBillParser().parse_pdf(path)
         return {
             "ok": True,
             "result": result.to_dict(),
@@ -65,31 +81,55 @@ def _emit(event: dict) -> None:
     print(json.dumps(event), flush=True)
 
 
-def _row_for_display(item: dict, appended: bool, skipped_reason: str | None) -> dict:
-    """Converts one LineItem dict (snake_case, from models.py) into the
-    camelCase shape lib/types.ts's ExtractedRow expects."""
-    return {
-        "itemNumber": item["item_number"],
-        "hsCode": item["hs_code"],
-        "description": item["description"],
-        "quantity": item["quantity"],
-        "uqc": item["uqc"],
-        "rate": item["rate"],
-        "fob": item["fob"],
-        "invoiceValue": item["invoice_value"],
-        "drawback": item["drawback"],
-        "rodtep": item["rodtep"],
-        "appended": appended,
-        "skippedReason": skipped_reason,
-    }
+def _debug(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
+def _print_debug_log(filename: str, debug_log: list[dict]) -> None:
+    """--debug output, in exactly the shape requested: for a field that
+    resolved to a workbook cell, show what matched and where it landed; for
+    one that didn't, show the label that was expected, why it failed, and
+    surrounding context — never a silent blank."""
+    _debug(f"\n=== PDF: {filename} ===")
+    for entry in debug_log:
+        _debug(f"Field: {entry['field']}")
+        if entry.get("workbook_cell"):
+            _debug(f"  Regex Used: {entry['label_pattern']}")
+            _debug(f"  Matched Text: {entry.get('matched_text')}")
+            _debug(f"  Extracted Value: {entry.get('extracted_value')}")
+            _debug(f"  Workbook Cell: {entry['workbook_cell']}")
+        else:
+            _debug(f"  Expected Label: {entry['label_pattern']}")
+            _debug(f"  Reason: {entry.get('reason') or 'value never reached a written workbook row (skipped/duplicate).'}")
+            _debug(f"  Context: {entry.get('context') or entry.get('matched_text')}")
+
+
+def _row_for_display(record: dict, appended: bool, skipped_reason: str | None) -> dict:
+    """Converts one LineRecord dict (snake_case, from models.py) into a
+    camelCase shape for the NDJSON "rows" list."""
+    camel = {}
+    for key, value in record.items():
+        parts = key.split("_")
+        camel_key = parts[0] + "".join(p.title() for p in parts[1:])
+        camel[camel_key] = value
+    camel["appended"] = appended
+    camel["skippedReason"] = skipped_reason
+    return camel
+
+
+def _dedup_key(record: dict) -> str:
+    return f"{record['shipping_bill_no']}|{record['invoice_no']}|{record['item_no']}"
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        _emit({"type": "fatal", "message": "usage: parser.py <manifest.json>"})
+    args = [a for a in argv[1:] if not a.startswith("--")]
+    debug = "--debug" in argv[1:] or os.environ.get("PARSER_DEBUG") == "1"
+
+    if len(args) != 1:
+        _emit({"type": "fatal", "message": "usage: parser.py <manifest.json> [--debug]"})
         return 1
 
-    with open(argv[1], "r", encoding="utf-8") as f:
+    with open(args[0], "r", encoding="utf-8") as f:
         manifest = json.load(f)
 
     batch_start = time.monotonic()
@@ -121,6 +161,7 @@ def main(argv: list[str]) -> int:
     _emit({"type": "totals", **totals})
 
     errors: list[dict] = []
+    written_records: list[dict] = []  # every LineRecord actually written, for Part 4 verification
     max_workers = manifest.get("max_workers") or os.cpu_count() or 4
 
     with ProcessPoolExecutor(max_workers=max_workers) as pool:
@@ -138,14 +179,10 @@ def main(argv: list[str]) -> int:
                     "type": "file",
                     "filename": filename,
                     "status": "failed",
-                    "shippingBill": None,
-                    "shippingBillDate": None,
-                    "invoiceNumber": None,
-                    "invoiceDate": None,
-                    "iec": None,
-                    "gstin": None,
                     "portCode": None,
-                    "exchangeRate": None,
+                    "shippingBillNo": None,
+                    "shippingBillDate": None,
+                    "invoiceCount": 0,
                     "rowsAppended": 0,
                     "rowsSkipped": 0,
                     "processingTimeMs": outcome["processingTimeMs"],
@@ -156,59 +193,54 @@ def main(argv: list[str]) -> int:
                 _emit({"type": "totals", **totals})
                 continue
 
-            result = outcome["result"]
+            result_dict = outcome["result"]
+            # Re-hydrate into real dataclass objects for build_line_records —
+            # results cross the process-pool boundary as plain JSON dicts.
+            result = _rehydrate(result_dict)
+
             rows_appended = 0
             rows_skipped = 0
             items_missing_key = 0
-            warnings = list(result["warnings"])
+            warnings = list(result_dict["warnings"])
             emitted_rows: list[dict] = []
+            debug_entries = [dict(e) for e in result_dict["debug_log"]]
 
-            for item in result["items"]:
-                totals["rowsExtracted"] += 1
+            line_records = build_line_records(result)
+            totals["rowsExtracted"] += len(line_records)
 
-                if not result["shipping_bill"] or not result["invoice_number"] or not item["item_number"]:
-                    # Can't form a de-duplication key — skip this line item
-                    # rather than guess at a substitute identifier.
+            for record, source_keys in line_records:
+                record_dict = record.to_dict()
+
+                if not record_dict["shipping_bill_no"] or not record_dict["invoice_no"] or not record_dict["item_no"]:
                     items_missing_key += 1
-                    emitted_rows.append(_row_for_display(item, appended=False, skipped_reason="missing_key"))
+                    emitted_rows.append(_row_for_display(record_dict, appended=False, skipped_reason="missing_key"))
                     continue
 
-                key = unique_key(result["shipping_bill"], result["invoice_number"], item["item_number"])
-
+                key = _dedup_key(record_dict)
                 if writer.has_key(key):
                     rows_skipped += 1
-                    emitted_rows.append(_row_for_display(item, appended=False, skipped_reason="duplicate"))
+                    emitted_rows.append(_row_for_display(record_dict, appended=False, skipped_reason="duplicate"))
                     continue
 
-                writer.append_row(key, [
-                    result["shipping_bill"],
-                    result["shipping_bill_date"],
-                    result["invoice_number"],
-                    result["invoice_date"],
-                    item["item_number"],
-                    item["hs_code"],
-                    item["description"],
-                    item["quantity"],
-                    item["uqc"],
-                    item["rate"],
-                    item["fob"],
-                    item["invoice_value"],
-                    item["drawback"],
-                    item["rodtep"],
-                    result["exchange_rate"],
-                    result["iec"],
-                    result["gstin"],
-                    result["port_code"],
-                    filename,
-                ])
+                cell_map = writer.append_row(key, record)
                 rows_appended += 1
-                emitted_rows.append(_row_for_display(item, appended=True, skipped_reason=None))
+                emitted_rows.append(_row_for_display(record_dict, appended=True, skipped_reason=None))
+                written_records.append({**record_dict, "_cell_map": cell_map, "_source_pdf": filename})
+
+                for entry in debug_entries:
+                    if entry.get("source_key") in source_keys and entry.get("workbook_cell") is None:
+                        cell = cell_map.get(entry["field"])
+                        if cell:
+                            entry["workbook_cell"] = cell
 
             if items_missing_key:
                 warnings.append(
                     f"{items_missing_key} line item(s) skipped: missing Shipping Bill No, "
                     "Invoice No, or Item No, so no de-duplication key could be formed."
                 )
+
+            if debug:
+                _print_debug_log(filename, debug_entries)
 
             totals["pdfsProcessed"] += 1
             totals["rowsAppended"] += rows_appended
@@ -218,14 +250,10 @@ def main(argv: list[str]) -> int:
                 "type": "file",
                 "filename": filename,
                 "status": "processed",
-                "shippingBill": result["shipping_bill"],
-                "shippingBillDate": result["shipping_bill_date"],
-                "invoiceNumber": result["invoice_number"],
-                "invoiceDate": result["invoice_date"],
-                "iec": result["iec"],
-                "gstin": result["gstin"],
-                "portCode": result["port_code"],
-                "exchangeRate": result["exchange_rate"],
+                "portCode": result_dict["port_code"],
+                "shippingBillNo": result_dict["shipping_bill_no"],
+                "shippingBillDate": result_dict["shipping_bill_date"],
+                "invoiceCount": len(result_dict["invoices"]),
                 "rowsAppended": rows_appended,
                 "rowsSkipped": rows_skipped,
                 "processingTimeMs": outcome["processingTimeMs"],
@@ -243,13 +271,27 @@ def main(argv: list[str]) -> int:
             csv_writer.writeheader()
             csv_writer.writerows(errors)
 
-    # Built from the workbook object already sitting in memory — never by
-    # re-opening the file we just saved. This is the one and only JSON
-    # conversion of the worksheet for the whole run.
-    preview = writer.to_preview()
+    # PART 2/3: the ONLY source of truth for the preview from here on is the
+    # workbook we just saved, read back with openpyxl — never parser JSON.
+    workbook_model = read_workbook(manifest["output_xlsx_path"])
+
+    # PART 4: parser output == workbook == preview, or fail loudly.
+    validation = verify_workbook(written_records, workbook_model, ATTRS, COLUMNS,
+                                  key_cols=(SHIPPING_BILL_COL, INVOICE_COL, ITEM_COL))
+    if not validation["ok"]:
+        _emit({"type": "validation_failed", "validation": validation})
+
+    # Row numbers appended *this run* (vs. pre-existing in the template) —
+    # purely a UI affordance for highlighting, derived from real written
+    # cells, never guessed.
+    new_row_numbers = sorted({
+        int("".join(ch for ch in next(iter(rec["_cell_map"].values())) if ch.isdigit()))
+        for rec in written_records if rec["_cell_map"]
+    })
 
     _emit({
         "type": "summary",
+        "newRowNumbers": new_row_numbers,
         "summary": {
             "totalPdfs": len(pdf_paths),
             "successfulPdfs": totals["pdfsProcessed"],
@@ -260,9 +302,41 @@ def main(argv: list[str]) -> int:
             "processingTimeMs": int((time.monotonic() - batch_start) * 1000),
         },
         "hadErrors": bool(errors),
-        "preview": preview,
+        "validation": validation,
+        "workbook": workbook_model,
     })
     return 0
+
+
+def _rehydrate(result_dict: dict) -> ShippingBillResult:
+    """Rebuilds a ShippingBillResult (with real Invoice/InvoiceItem/
+    DrawbackRow/RodtepRow objects, not plain dicts) from the plain dict that
+    crossed the process-pool boundary as JSON, so build_line_records() can
+    use attribute access and id()-based source tracking exactly as it does
+    on the in-process result."""
+    from models import DrawbackRow, Invoice, InvoiceItem, RodtepRow
+
+    invoices = [
+        Invoice(
+            sno=inv["sno"], invoice_no=inv["invoice_no"], invoice_date=inv["invoice_date"],
+            exchange_rate=inv["exchange_rate"],
+            items=[InvoiceItem(**item) for item in inv["items"]],
+        )
+        for inv in result_dict["invoices"]
+    ]
+    drawback_rows = [DrawbackRow(**d) for d in result_dict["drawback_rows"]]
+    rodtep_rows = [RodtepRow(**r) for r in result_dict["rodtep_rows"]]
+
+    return ShippingBillResult(
+        port_code=result_dict["port_code"],
+        shipping_bill_no=result_dict["shipping_bill_no"],
+        shipping_bill_date=result_dict["shipping_bill_date"],
+        invoices=invoices,
+        drawback_rows=drawback_rows,
+        rodtep_rows=rodtep_rows,
+        warnings=result_dict["warnings"],
+        debug_log=[],
+    )
 
 
 if __name__ == "__main__":

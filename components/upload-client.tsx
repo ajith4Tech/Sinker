@@ -271,7 +271,15 @@ export function UploadClient() {
       {result && (
         <div className="flex flex-col gap-3">
           <h2 className="text-lg font-semibold tracking-tight">Excel Preview</h2>
-          <ExcelPreview preview={result.preview} />
+          {!result.validation.ok && (
+            <p className="rounded border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              Validation found a mismatch between the parser output and the saved workbook — see the server log for
+              details ({result.validation.incorrectFields.length} incorrect field(s),{" "}
+              {result.validation.blankMandatoryFields.length} blank mandatory field(s),{" "}
+              {result.validation.shiftedColumns.length} shifted column(s)).
+            </p>
+          )}
+          <ExcelPreview workbook={result.workbook} newRowNumbers={result.newRowNumbers} />
         </div>
       )}
 

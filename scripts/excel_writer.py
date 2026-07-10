@@ -1,15 +1,14 @@
 """ExcelWriter: load a template workbook, append new rows, save a copy.
 
-Knows nothing about PDF parsing — it only ever sees plain row values and a
-de-duplication key string. Loads the template with openpyxl (which
-preserves existing formatting, merged cells, formulas, fonts, borders, and
-column widths as long as we only ever write to previously-untouched cells)
-and writes to a *new* output path; the template itself is never modified.
+Knows nothing about PDF parsing — it only ever sees LineRecord objects and a
+de-duplication key string. Loads the template with openpyxl (which preserves
+existing formatting, merged cells, formulas, fonts, borders, and column
+widths as long as we only ever write to previously-untouched data cells) and
+writes to a *new* output path; the template itself is never modified.
 
 Performance: the workbook is loaded once, the existing-row HashSet is built
 once by a single top-to-bottom scan, and the workbook is saved once after
-every row has been appended in memory — matching the "load once, save once,
-never rescan" requirement for batches of thousands of PDFs.
+every row has been appended in memory.
 """
 
 from __future__ import annotations
@@ -17,36 +16,36 @@ from __future__ import annotations
 from datetime import date, datetime, time
 
 from openpyxl import load_workbook
+from openpyxl.styles import Alignment
+from openpyxl.utils import get_column_letter
 
-# Column order written to the sheet. Custom templates must use this same
-# header order (see README) — the writer maps by fixed column *index*, not
-# by reading header text, to keep this simple and dependency-free.
-COLUMNS = [
-    "Shipping Bill No",
-    "Shipping Bill Date",
-    "Invoice No",
-    "Invoice Date",
-    "Item No",
-    "HS Code",
-    "Description",
-    "Quantity",
-    "UQC",
-    "Rate",
-    "FOB",
-    "Invoice Value",
-    "Drawback",
-    "RODTEP",
-    "Exchange Rate",
-    "IEC",
-    "GSTIN",
-    "Port Code",
-    "Source File",
-]
+from models import LineRecord
+from template_schema import (
+    ATTRS,
+    COLUMNS,
+    FIRST_DATA_ROW,
+    INVOICE_COL,
+    ITEM_COL,
+    NUM_COLUMNS,
+    NUMERIC_ATTRS,
+    SHIPPING_BILL_COL,
+)
 
-HEADER_ROW = 1
-SHIPPING_BILL_COL = COLUMNS.index("Shipping Bill No") + 1
-INVOICE_COL = COLUMNS.index("Invoice No") + 1
-ITEM_COL = COLUMNS.index("Item No") + 1
+_RIGHT_ALIGN = Alignment(horizontal="right")
+
+
+def _coerce(attr: str, value):
+    """Numeric-column values are written as real numbers (not text) so
+    Excel right-aligns them and its own number semantics (sorting, SUM
+    formulas) work — never guessed for non-numeric columns, and left as the
+    original string if it doesn't parse cleanly (never silently dropped)."""
+    if attr not in NUMERIC_ATTRS or value is None:
+        return value
+    try:
+        as_float = float(value)
+    except (TypeError, ValueError):
+        return value
+    return int(as_float) if as_float.is_integer() else as_float
 
 
 class ExcelWriter:
@@ -61,9 +60,9 @@ class ExcelWriter:
         """Single pass over existing data rows: builds the de-duplication
         HashSet and finds the true last data row (ignoring trailing
         formatted-but-empty rows some templates ship with)."""
-        last_data_row = HEADER_ROW
+        last_data_row = FIRST_DATA_ROW - 1
 
-        for row in range(HEADER_ROW + 1, self._sheet.max_row + 1):
+        for row in range(FIRST_DATA_ROW, self._sheet.max_row + 1):
             sb = self._sheet.cell(row=row, column=SHIPPING_BILL_COL).value
             invoice = self._sheet.cell(row=row, column=INVOICE_COL).value
             item = self._sheet.cell(row=row, column=ITEM_COL).value
@@ -79,13 +78,27 @@ class ExcelWriter:
     def has_key(self, key: str) -> bool:
         return key in self._seen_keys
 
-    def append_row(self, key: str, values: list) -> None:
-        """Appends one row. Caller must have already checked has_key(key)."""
-        for col, value in enumerate(values, start=1):
-            self._sheet.cell(row=self._next_row, column=col, value=value)
+    def append_row(self, key: str, record: LineRecord) -> dict[str, str]:
+        """Appends one LineRecord. Caller must have already checked
+        has_key(key). Returns {field_header: "A1"-style cell address} for
+        every non-spacer column, so callers can back-fill workbook_cell on
+        debug_log entries."""
+        row = self._next_row
+        cell_map: dict[str, str] = {}
+        values = record.to_dict()
+
+        for col_index, (header, attr) in enumerate(zip(COLUMNS, ATTRS), start=1):
+            if attr is None:
+                continue
+            cell = self._sheet.cell(row=row, column=col_index, value=_coerce(attr, values.get(attr)))
+            if attr in NUMERIC_ATTRS:
+                cell.alignment = _RIGHT_ALIGN
+            cell_map[header] = f"{get_column_letter(col_index)}{row}"
+
         self._seen_keys.add(key)
-        self._new_rows.add(self._next_row)
+        self._new_rows.add(row)
         self._next_row += 1
+        return cell_map
 
     def save(self, output_path: str) -> None:
         self._workbook.save(output_path)
@@ -96,10 +109,10 @@ class ExcelWriter:
         workbook we already have open, never by re-reading the saved file.
         Call only after save(); the row range is fixed at that point."""
         rows = []
-        for row_num in range(HEADER_ROW + 1, self._next_row):
+        for row_num in range(FIRST_DATA_ROW, self._next_row):
             values = [
                 _serialize_cell(self._sheet.cell(row=row_num, column=col).value)
-                for col in range(1, len(COLUMNS) + 1)
+                for col in range(1, NUM_COLUMNS + 1)
             ]
             rows.append({
                 "rowNumber": row_num,
