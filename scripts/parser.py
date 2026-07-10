@@ -65,6 +65,25 @@ def _emit(event: dict) -> None:
     print(json.dumps(event), flush=True)
 
 
+def _row_for_display(item: dict, appended: bool, skipped_reason: str | None) -> dict:
+    """Converts one LineItem dict (snake_case, from models.py) into the
+    camelCase shape lib/types.ts's ExtractedRow expects."""
+    return {
+        "itemNumber": item["item_number"],
+        "hsCode": item["hs_code"],
+        "description": item["description"],
+        "quantity": item["quantity"],
+        "uqc": item["uqc"],
+        "rate": item["rate"],
+        "fob": item["fob"],
+        "invoiceValue": item["invoice_value"],
+        "drawback": item["drawback"],
+        "rodtep": item["rodtep"],
+        "appended": appended,
+        "skippedReason": skipped_reason,
+    }
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         _emit({"type": "fatal", "message": "usage: parser.py <manifest.json>"})
@@ -120,11 +139,19 @@ def main(argv: list[str]) -> int:
                     "filename": filename,
                     "status": "failed",
                     "shippingBill": None,
+                    "shippingBillDate": None,
+                    "invoiceNumber": None,
+                    "invoiceDate": None,
+                    "iec": None,
+                    "gstin": None,
+                    "portCode": None,
+                    "exchangeRate": None,
                     "rowsAppended": 0,
                     "rowsSkipped": 0,
                     "processingTimeMs": outcome["processingTimeMs"],
                     "error": outcome["error"],
                     "warnings": [],
+                    "rows": [],
                 })
                 _emit({"type": "totals", **totals})
                 continue
@@ -134,6 +161,7 @@ def main(argv: list[str]) -> int:
             rows_skipped = 0
             items_missing_key = 0
             warnings = list(result["warnings"])
+            emitted_rows: list[dict] = []
 
             for item in result["items"]:
                 totals["rowsExtracted"] += 1
@@ -142,12 +170,14 @@ def main(argv: list[str]) -> int:
                     # Can't form a de-duplication key — skip this line item
                     # rather than guess at a substitute identifier.
                     items_missing_key += 1
+                    emitted_rows.append(_row_for_display(item, appended=False, skipped_reason="missing_key"))
                     continue
 
                 key = unique_key(result["shipping_bill"], result["invoice_number"], item["item_number"])
 
                 if writer.has_key(key):
                     rows_skipped += 1
+                    emitted_rows.append(_row_for_display(item, appended=False, skipped_reason="duplicate"))
                     continue
 
                 writer.append_row(key, [
@@ -172,6 +202,7 @@ def main(argv: list[str]) -> int:
                     filename,
                 ])
                 rows_appended += 1
+                emitted_rows.append(_row_for_display(item, appended=True, skipped_reason=None))
 
             if items_missing_key:
                 warnings.append(
@@ -188,11 +219,19 @@ def main(argv: list[str]) -> int:
                 "filename": filename,
                 "status": "processed",
                 "shippingBill": result["shipping_bill"],
+                "shippingBillDate": result["shipping_bill_date"],
+                "invoiceNumber": result["invoice_number"],
+                "invoiceDate": result["invoice_date"],
+                "iec": result["iec"],
+                "gstin": result["gstin"],
+                "portCode": result["port_code"],
+                "exchangeRate": result["exchange_rate"],
                 "rowsAppended": rows_appended,
                 "rowsSkipped": rows_skipped,
                 "processingTimeMs": outcome["processingTimeMs"],
                 "error": None,
                 "warnings": warnings,
+                "rows": emitted_rows,
             })
             _emit({"type": "totals", **totals})
 

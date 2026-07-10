@@ -1,16 +1,26 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { FileDropZone } from "@/components/file-drop-zone";
 import type {
   DoneEvent,
   ExtractEvent,
   ExtractSummary,
+  ExtractedRow,
   FileProgressEvent,
   TotalsProgressEvent,
 } from "@/lib/types";
@@ -24,6 +34,10 @@ const EMPTY_TOTALS: TotalsProgressEvent = {
   rowsAppended: 0,
   rowsSkipped: 0,
 };
+
+interface LogEntry extends FileProgressEvent {
+  id: number;
+}
 
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -40,18 +54,47 @@ export function UploadClient() {
   const [extracting, setExtracting] = useState(false);
   const [totals, setTotals] = useState<TotalsProgressEvent>(EMPTY_TOTALS);
   const [lastFile, setLastFile] = useState<FileProgressEvent | null>(null);
-  const [fileLog, setFileLog] = useState<FileProgressEvent[]>([]);
+  const [fileLog, setFileLog] = useState<LogEntry[]>([]);
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [elapsedMs, setElapsedMs] = useState(0);
   const [result, setResult] = useState<DoneEvent | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startRef = useRef<number>(0);
+  const logIdRef = useRef(0);
+
+  // Lets the Log show "View PDF" for any directly-uploaded file, entirely
+  // client-side — the browser already has these bytes, no server round trip.
+  // Files that came from inside an uploaded ZIP aren't in this map (we never
+  // unzip client-side), so those simply don't get a preview button.
+  const previewUrls = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const file of files) {
+      map.set(file.name, URL.createObjectURL(file));
+    }
+    return map;
+  }, [files]);
+
+  useEffect(() => {
+    return () => {
+      previewUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [previewUrls]);
 
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
+
+  function toggleExpanded(id: number) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function handleExtract() {
     if (files.length === 0) return;
@@ -60,8 +103,10 @@ export function UploadClient() {
     setTotals(EMPTY_TOTALS);
     setLastFile(null);
     setFileLog([]);
+    setExpandedIds(new Set());
     setResult(null);
     setElapsedMs(0);
+    logIdRef.current = 0;
 
     startRef.current = performance.now();
     timerRef.current = setInterval(() => setElapsedMs(performance.now() - startRef.current), 500);
@@ -98,7 +143,7 @@ export function UploadClient() {
             setTotals(event);
           } else if (event.type === "file") {
             setLastFile(event);
-            setFileLog((prev) => [event, ...prev]);
+            setFileLog((prev) => [{ ...event, id: logIdRef.current++ }, ...prev]);
           } else if (event.type === "done") {
             setResult(event);
           } else if (event.type === "fatal") {
@@ -118,7 +163,7 @@ export function UploadClient() {
   const canExtract = files.length > 0 && !extracting && (templateMode === "default" || customTemplate.length > 0);
 
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-6 px-6 py-10">
+    <main className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-10">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Sinker</h1>
         <p className="text-sm text-muted-foreground">
@@ -233,38 +278,137 @@ export function UploadClient() {
           <CardHeader>
             <CardTitle className="text-base">Log</CardTitle>
           </CardHeader>
-          <CardContent className="max-h-72 overflow-y-auto">
-            <ul className="space-y-2 text-sm">
-              {fileLog.map((entry, i) => (
-                <li key={i} className="border-b py-1.5 last:border-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate font-medium">{entry.filename}</span>
-                    <span className="flex items-center gap-2 whitespace-nowrap text-muted-foreground">
-                      {entry.status === "failed" ? (
-                        <Badge variant="destructive">FAILED</Badge>
-                      ) : (
-                        <Badge variant="secondary">
-                          {entry.rowsAppended} row{entry.rowsAppended === 1 ? "" : "s"}
-                        </Badge>
-                      )}
-                      {entry.processingTimeMs}ms
-                    </span>
-                  </div>
-                  {entry.error && <p className="text-xs text-destructive">{entry.error}</p>}
-                  {entry.warnings.length > 0 && (
-                    <ul className="mt-1 list-inside list-disc text-xs text-muted-foreground">
-                      {entry.warnings.map((warning, w) => (
-                        <li key={w}>{warning}</li>
-                      ))}
-                    </ul>
-                  )}
-                </li>
-              ))}
-            </ul>
+          <CardContent className="flex flex-col gap-1">
+            {fileLog.map((entry) => (
+              <LogRow
+                key={entry.id}
+                entry={entry}
+                expanded={expandedIds.has(entry.id)}
+                onToggle={() => toggleExpanded(entry.id)}
+                previewUrl={previewUrls.get(entry.filename) ?? null}
+              />
+            ))}
           </CardContent>
         </Card>
       )}
     </main>
+  );
+}
+
+function LogRow({
+  entry,
+  expanded,
+  onToggle,
+  previewUrl,
+}: {
+  entry: LogEntry;
+  expanded: boolean;
+  onToggle: () => void;
+  previewUrl: string | null;
+}) {
+  const hasDetails = entry.rows.length > 0 || Boolean(previewUrl) || Boolean(entry.error) || entry.warnings.length > 0;
+
+  return (
+    <div className="border-b py-1.5 last:border-0">
+      <button
+        className="flex w-full items-center justify-between gap-2 text-left"
+        onClick={hasDetails ? onToggle : undefined}
+      >
+        <span className="flex items-center gap-1 truncate font-medium">
+          {hasDetails &&
+            (expanded ? (
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            ))}
+          {entry.filename}
+        </span>
+        <span className="flex items-center gap-2 whitespace-nowrap text-muted-foreground">
+          {entry.status === "failed" ? (
+            <Badge variant="destructive">FAILED</Badge>
+          ) : (
+            <Badge variant="secondary">
+              {entry.rowsAppended} row{entry.rowsAppended === 1 ? "" : "s"}
+            </Badge>
+          )}
+          {entry.processingTimeMs}ms
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="mt-2 flex flex-col gap-3 pl-5">
+          {entry.error && <p className="text-xs text-destructive">{entry.error}</p>}
+
+          {entry.warnings.length > 0 && (
+            <ul className="list-inside list-disc text-xs text-muted-foreground">
+              {entry.warnings.map((warning, w) => (
+                <li key={w}>{warning}</li>
+              ))}
+            </ul>
+          )}
+
+          {previewUrl && (
+            <div>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">Uploaded PDF</p>
+              <iframe src={previewUrl} title={entry.filename} className="h-72 w-full rounded border" />
+            </div>
+          )}
+          {!previewUrl && (
+            <p className="text-xs text-muted-foreground">
+              (Preview unavailable — this file came from inside a ZIP.)
+            </p>
+          )}
+
+          {entry.rows.length > 0 && <ExtractedRowsTable rows={entry.rows} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExtractedRowsTable({ rows }: { rows: ExtractedRow[] }) {
+  return (
+    <div>
+      <p className="mb-1 text-xs font-medium text-muted-foreground">Extracted rows</p>
+      <div className="overflow-x-auto rounded border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Item</TableHead>
+              <TableHead>HS Code</TableHead>
+              <TableHead>Description</TableHead>
+              <TableHead>Qty</TableHead>
+              <TableHead>UQC</TableHead>
+              <TableHead>Rate</TableHead>
+              <TableHead>FOB</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row, i) => (
+              <TableRow key={i}>
+                <TableCell>{row.itemNumber ?? "—"}</TableCell>
+                <TableCell>{row.hsCode ?? "—"}</TableCell>
+                <TableCell className="max-w-[16rem] truncate">{row.description ?? "—"}</TableCell>
+                <TableCell>{row.quantity ?? "—"}</TableCell>
+                <TableCell>{row.uqc ?? "—"}</TableCell>
+                <TableCell>{row.rate ?? "—"}</TableCell>
+                <TableCell>{row.fob ?? "—"}</TableCell>
+                <TableCell>
+                  {row.appended ? (
+                    <Badge variant="secondary">Added</Badge>
+                  ) : row.skippedReason === "duplicate" ? (
+                    <Badge variant="outline">Duplicate</Badge>
+                  ) : (
+                    <Badge variant="destructive">No key</Badge>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
   );
 }
 

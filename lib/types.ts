@@ -16,6 +16,12 @@ export interface ExtractLineItem {
   rodtep: string | null;
 }
 
+/** One extracted line item as shown in the page's Log, without downloading anything. */
+export interface ExtractedRow extends ExtractLineItem {
+  appended: boolean;
+  skippedReason: "duplicate" | "missing_key" | null;
+}
+
 export interface ShippingBillResult {
   shippingBill: string | null;
   shippingBillDate: string | null;
@@ -35,6 +41,13 @@ export interface FileProgressEvent {
   filename: string;
   status: "processed" | "failed";
   shippingBill: string | null;
+  shippingBillDate: string | null;
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  iec: string | null;
+  gstin: string | null;
+  portCode: string | null;
+  exchangeRate: string | null;
   rowsAppended: number;
   rowsSkipped: number;
   processingTimeMs: number;
@@ -43,6 +56,10 @@ export interface FileProgressEvent {
   // label not found." A file can be "processed" with 0 rows appended and
   // still have warnings explaining why nothing was extracted.
   warnings: string[];
+  // Every line item found in this PDF — including ones skipped as
+  // duplicates or for lacking a de-duplication key — so the page can show
+  // exactly what was extracted without downloading the workbook.
+  rows: ExtractedRow[];
 }
 
 /** Running totals, sent alongside each file event so the UI never has to sum client-side. */
