@@ -15,11 +15,11 @@ _END = r"(?=\n|\s{2,}|$)"
 # Fields that appear once per document (outside the line-item table).
 HEADER_PATTERNS: dict[str, list[str]] = {
     "shipping_bill": [
-        rf"S\.?B\.?\s*No\.?{_VALUE}{_END}",
+        rf"S[./]?B\.?\s*No\.?{_VALUE}{_END}",
         rf"Shipping\s*Bill\s*No\.?{_VALUE}{_END}",
     ],
     "shipping_bill_date": [
-        rf"S\.?B\.?\s*Date{_VALUE}{_END}",
+        rf"S[./]?B\.?\s*Date{_VALUE}{_END}",
         rf"Shipping\s*Bill\s*Date{_VALUE}{_END}",
     ],
     "invoice_number": [
@@ -47,7 +47,9 @@ HEADER_PATTERNS: dict[str, list[str]] = {
 ITEM_PATTERNS: dict[str, list[str]] = {
     "item_number": [
         rf"Item\s*No\.?{_VALUE}{_END}",
+        rf"Item\s*Sr\.?\s*No\.?{_VALUE}{_END}",
         rf"Sl\.?\s*No\.?{_VALUE}{_END}",
+        rf"Sr\.?\s*No\.?{_VALUE}{_END}",
     ],
     "hs_code": [
         rf"HS\s*Code{_VALUE}{_END}",
@@ -82,4 +84,6 @@ ITEM_PATTERNS: dict[str, list[str]] = {
 # Line items are table rows, each introduced by its own "Item No" / "Sl No".
 # Splitting the document on this boundary isolates one item's fields from
 # the next (and from header fields, which live before the first boundary).
-ITEM_BOUNDARY_PATTERN = r"(?=Item\s*No\.?[:\-\s]|Sl\.?\s*No\.?[:\-\s])"
+ITEM_BOUNDARY_PATTERN = (
+    r"(?=Item\s*No\.?[:\-\s]|Item\s*Sr\.?\s*No\.?[:\-\s]|Sl\.?\s*No\.?[:\-\s]|Sr\.?\s*No\.?[:\-\s])"
+)

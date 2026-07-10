@@ -124,6 +124,7 @@ def main(argv: list[str]) -> int:
                     "rowsSkipped": 0,
                     "processingTimeMs": outcome["processingTimeMs"],
                     "error": outcome["error"],
+                    "warnings": [],
                 })
                 _emit({"type": "totals", **totals})
                 continue
@@ -131,14 +132,18 @@ def main(argv: list[str]) -> int:
             result = outcome["result"]
             rows_appended = 0
             rows_skipped = 0
+            items_missing_key = 0
+            warnings = list(result["warnings"])
 
             for item in result["items"]:
+                totals["rowsExtracted"] += 1
+
                 if not result["shipping_bill"] or not result["invoice_number"] or not item["item_number"]:
                     # Can't form a de-duplication key — skip this line item
                     # rather than guess at a substitute identifier.
+                    items_missing_key += 1
                     continue
 
-                totals["rowsExtracted"] += 1
                 key = unique_key(result["shipping_bill"], result["invoice_number"], item["item_number"])
 
                 if writer.has_key(key):
@@ -168,6 +173,12 @@ def main(argv: list[str]) -> int:
                 ])
                 rows_appended += 1
 
+            if items_missing_key:
+                warnings.append(
+                    f"{items_missing_key} line item(s) skipped: missing Shipping Bill No, "
+                    "Invoice No, or Item No, so no de-duplication key could be formed."
+                )
+
             totals["pdfsProcessed"] += 1
             totals["rowsAppended"] += rows_appended
             totals["rowsSkipped"] += rows_skipped
@@ -181,6 +192,7 @@ def main(argv: list[str]) -> int:
                 "rowsSkipped": rows_skipped,
                 "processingTimeMs": outcome["processingTimeMs"],
                 "error": None,
+                "warnings": warnings,
             })
             _emit({"type": "totals", **totals})
 

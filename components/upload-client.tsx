@@ -234,18 +234,30 @@ export function UploadClient() {
             <CardTitle className="text-base">Log</CardTitle>
           </CardHeader>
           <CardContent className="max-h-72 overflow-y-auto">
-            <ul className="space-y-1 text-sm">
+            <ul className="space-y-2 text-sm">
               {fileLog.map((entry, i) => (
-                <li key={i} className="flex items-center justify-between gap-2 border-b py-1.5 last:border-0">
-                  <span className="truncate">{entry.filename}</span>
-                  <span className="flex items-center gap-2 text-muted-foreground">
-                    {entry.status === "failed" ? (
-                      <Badge variant="destructive">FAILED</Badge>
-                    ) : (
-                      <Badge variant="secondary">OK</Badge>
-                    )}
-                    {entry.processingTimeMs}ms
-                  </span>
+                <li key={i} className="border-b py-1.5 last:border-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-medium">{entry.filename}</span>
+                    <span className="flex items-center gap-2 whitespace-nowrap text-muted-foreground">
+                      {entry.status === "failed" ? (
+                        <Badge variant="destructive">FAILED</Badge>
+                      ) : (
+                        <Badge variant="secondary">
+                          {entry.rowsAppended} row{entry.rowsAppended === 1 ? "" : "s"}
+                        </Badge>
+                      )}
+                      {entry.processingTimeMs}ms
+                    </span>
+                  </div>
+                  {entry.error && <p className="text-xs text-destructive">{entry.error}</p>}
+                  {entry.warnings.length > 0 && (
+                    <ul className="mt-1 list-inside list-disc text-xs text-muted-foreground">
+                      {entry.warnings.map((warning, w) => (
+                        <li key={w}>{warning}</li>
+                      ))}
+                    </ul>
+                  )}
                 </li>
               ))}
             </ul>

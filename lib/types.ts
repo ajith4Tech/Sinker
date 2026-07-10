@@ -39,6 +39,10 @@ export interface FileProgressEvent {
   rowsSkipped: number;
   processingTimeMs: number;
   error: string | null;
+  // Non-fatal notes from ShippingBillParser — e.g. "Shipping Bill Number
+  // label not found." A file can be "processed" with 0 rows appended and
+  // still have warnings explaining why nothing was extracted.
+  warnings: string[];
 }
 
 /** Running totals, sent alongside each file event so the UI never has to sum client-side. */
