@@ -7,26 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { SummaryCard } from "@/components/SummaryCard";
 import { DownloadPanel } from "@/components/DownloadPanel";
 import { ExcelPreview } from "@/components/ExcelPreview";
-import type {
-  DoneEvent,
-  ExtractEvent,
-  ExtractedRow,
-  FileProgressEvent,
-  TotalsProgressEvent,
-} from "@/lib/types";
+import type { DoneEvent, ExtractEvent, FileProgressEvent, TotalsProgressEvent } from "@/lib/types";
 
 const EMPTY_TOTALS: TotalsProgressEvent = {
   type: "totals",
@@ -38,9 +24,13 @@ const EMPTY_TOTALS: TotalsProgressEvent = {
   rowsSkipped: 0,
 };
 
-interface LogEntry extends FileProgressEvent {
-  id: number;
-}
+// The Processing Log is a chronological list of what happened, not a place
+// to inspect extracted values — see the "system" variant for the plain
+// start/finish/error lines, and "file" for one line per completed PDF
+// (status/timing/error/warnings only — never the row data it produced).
+type LogItem =
+  | { kind: "system"; id: number; tone: "info" | "error"; message: string }
+  | { kind: "file"; id: number; event: FileProgressEvent };
 
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -54,12 +44,12 @@ export function UploadClient() {
   const [templateMode, setTemplateMode] = useState<"default" | "custom">("default");
   const [customTemplate, setCustomTemplate] = useState<File[]>([]);
 
-  const [activeTab, setActiveTab] = useState<"upload" | "preview">("upload");
   const [extracting, setExtracting] = useState(false);
   const [totals, setTotals] = useState<TotalsProgressEvent>(EMPTY_TOTALS);
   const [lastFile, setLastFile] = useState<FileProgressEvent | null>(null);
-  const [fileLog, setFileLog] = useState<LogEntry[]>([]);
+  const [logItems, setLogItems] = useState<LogItem[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const [logOpen, setLogOpen] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [result, setResult] = useState<DoneEvent | null>(null);
 
@@ -100,13 +90,17 @@ export function UploadClient() {
     });
   }
 
+  function pushSystemLog(tone: "info" | "error", message: string) {
+    setLogItems((prev) => [{ kind: "system", id: logIdRef.current++, tone, message }, ...prev]);
+  }
+
   async function handleExtract() {
     if (files.length === 0) return;
 
     setExtracting(true);
     setTotals(EMPTY_TOTALS);
     setLastFile(null);
-    setFileLog([]);
+    setLogItems([]);
     setExpandedIds(new Set());
     setResult(null);
     setElapsedMs(0);
@@ -114,6 +108,8 @@ export function UploadClient() {
 
     startRef.current = performance.now();
     timerRef.current = setInterval(() => setElapsedMs(performance.now() - startRef.current), 500);
+
+    pushSystemLog("info", `Processing started — ${files.length} file${files.length === 1 ? "" : "s"} queued.`);
 
     const form = new FormData();
     files.forEach((file) => form.append("files", file));
@@ -125,6 +121,7 @@ export function UploadClient() {
       const res = await fetch("/api/extract", { method: "POST", body: form });
       if (!res.body) {
         toast.error("Extraction failed to start.");
+        pushSystemLog("error", "Extraction failed to start.");
         return;
       }
 
@@ -147,12 +144,18 @@ export function UploadClient() {
             setTotals(event);
           } else if (event.type === "file") {
             setLastFile(event);
-            setFileLog((prev) => [{ ...event, id: logIdRef.current++ }, ...prev]);
+            setLogItems((prev) => [{ kind: "file", id: logIdRef.current++, event }, ...prev]);
           } else if (event.type === "done") {
             setResult(event);
-            setActiveTab("preview");
+            pushSystemLog(
+              "info",
+              `Extraction complete — ${event.summary.successfulPdfs} processed, ` +
+                `${event.summary.failedPdfs} failed, ${event.summary.rowsAppended} row(s) added, ` +
+                `${event.summary.rowsSkipped} duplicate(s) skipped.`
+            );
           } else if (event.type === "fatal") {
             toast.error(event.message);
+            pushSystemLog("error", event.message);
           }
         }
       }
@@ -176,126 +179,147 @@ export function UploadClient() {
         </p>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "upload" | "preview")}>
-        <TabsList>
-          <TabsTrigger value="upload">Upload &amp; Extract</TabsTrigger>
-          <TabsTrigger value="preview" disabled={!result}>
-            Preview
-          </TabsTrigger>
-        </TabsList>
+      {/* 1. Upload PDFs / ZIP */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Upload PDFs / ZIP</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <FileDropZone
+            files={files}
+            onFilesChange={setFiles}
+            accept=".pdf,.zip"
+            label="Upload Shipping Bill PDFs or a ZIP of PDFs"
+          />
+        </CardContent>
+      </Card>
 
-        <TabsContent value="upload" className="flex flex-col gap-6">
+      {/* 2. Template selection */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Excel Template</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name="template-mode"
+              checked={templateMode === "default"}
+              onChange={() => setTemplateMode("default")}
+            />
+            Use built-in Excel template (default)
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name="template-mode"
+              checked={templateMode === "custom"}
+              onChange={() => setTemplateMode("custom")}
+            />
+            Upload custom Excel template
+          </label>
+
+          {templateMode === "custom" && (
+            <FileDropZone
+              files={customTemplate}
+              onFilesChange={(next) => setCustomTemplate(next.slice(-1))}
+              accept=".xlsx"
+              multiple={false}
+              label="Upload your .xlsx template"
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 3. Extract button */}
+      <Button size="lg" className="h-14 text-lg" disabled={!canExtract} onClick={handleExtract}>
+        {extracting ? "Extracting…" : "Extract"}
+      </Button>
+
+      {/* 4. Progress */}
+      {(extracting || result) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Progress</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <Progress value={progressPct} />
+
+            <div className="grid grid-cols-3 gap-4 text-center sm:grid-cols-4">
+              <Stat label="PDFs Found" value={totals.pdfsFound} />
+              <Stat label="Processed" value={totals.pdfsProcessed} />
+              <Stat label="Rows Appended" value={totals.rowsAppended} />
+              <Stat label="Rows Skipped" value={totals.rowsSkipped} />
+              <Stat label="Rows Extracted" value={totals.rowsExtracted} />
+              <Stat label="Errors" value={totals.pdfsFailed} />
+              <Stat label="Elapsed" value={formatElapsed(elapsedMs)} />
+            </div>
+
+            {lastFile && (
+              <p className="truncate text-sm text-muted-foreground">
+                Current PDF: <span className="font-medium text-foreground">{lastFile.filename}</span>
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 5. Summary */}
+      {result && <SummaryCard summary={result.summary} templateUsed={result.templateUsed} />}
+
+      {/* 6. Excel Preview — the primary focus once extraction finishes */}
+      {result && (
+        <div className="flex flex-col gap-3">
+          <h2 className="text-lg font-semibold tracking-tight">Excel Preview</h2>
+          <ExcelPreview preview={result.preview} />
+        </div>
+      )}
+
+      {/* 7. Download */}
+      {result && <DownloadPanel downloadUrl={result.downloadUrl} errorReportUrl={result.errorReportUrl} />}
+
+      {/* 8. Processing Log — collapsed by default, never shows extracted values */}
+      {logItems.length > 0 && (
+        <Collapsible open={logOpen} onOpenChange={setLogOpen}>
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Upload PDFs / ZIP</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FileDropZone
-                files={files}
-                onFilesChange={setFiles}
-                accept=".pdf,.zip"
-                label="Upload Shipping Bill PDFs or a ZIP of PDFs"
-              />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Excel Template</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="template-mode"
-                  checked={templateMode === "default"}
-                  onChange={() => setTemplateMode("default")}
-                />
-                Use built-in Excel template (default)
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="template-mode"
-                  checked={templateMode === "custom"}
-                  onChange={() => setTemplateMode("custom")}
-                />
-                Upload custom Excel template
-              </label>
-
-              {templateMode === "custom" && (
-                <FileDropZone
-                  files={customTemplate}
-                  onFilesChange={(next) => setCustomTemplate(next.slice(-1))}
-                  accept=".xlsx"
-                  multiple={false}
-                  label="Upload your .xlsx template"
-                />
-              )}
-            </CardContent>
-          </Card>
-
-          <Button size="lg" className="h-14 text-lg" disabled={!canExtract} onClick={handleExtract}>
-            {extracting ? "Extracting…" : "Extract"}
-          </Button>
-
-          {(extracting || result) && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Progress</CardTitle>
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer select-none">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  {logOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  Processing Log
+                  <span className="text-xs font-normal text-muted-foreground">({logItems.length})</span>
+                </CardTitle>
               </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                <Progress value={progressPct} />
-
-                <div className="grid grid-cols-3 gap-4 text-center sm:grid-cols-4">
-                  <Stat label="PDFs Found" value={totals.pdfsFound} />
-                  <Stat label="Processed" value={totals.pdfsProcessed} />
-                  <Stat label="Rows Appended" value={totals.rowsAppended} />
-                  <Stat label="Rows Skipped" value={totals.rowsSkipped} />
-                  <Stat label="Rows Extracted" value={totals.rowsExtracted} />
-                  <Stat label="Errors" value={totals.pdfsFailed} />
-                  <Stat label="Elapsed" value={formatElapsed(elapsedMs)} />
-                </div>
-
-                {lastFile && (
-                  <p className="truncate text-sm text-muted-foreground">
-                    Current PDF: <span className="font-medium text-foreground">{lastFile.filename}</span>
-                  </p>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="flex flex-col gap-1">
+                {logItems.map((item) =>
+                  item.kind === "system" ? (
+                    <p
+                      key={item.id}
+                      className={
+                        item.tone === "error"
+                          ? "border-b py-1.5 text-sm text-destructive last:border-0"
+                          : "border-b py-1.5 text-sm text-muted-foreground last:border-0"
+                      }
+                    >
+                      {item.message}
+                    </p>
+                  ) : (
+                    <LogRow
+                      key={item.id}
+                      entry={item.event}
+                      expanded={expandedIds.has(item.id)}
+                      onToggle={() => toggleExpanded(item.id)}
+                      previewUrl={previewUrls.get(item.event.filename) ?? null}
+                    />
+                  )
                 )}
               </CardContent>
-            </Card>
-          )}
-
-          {fileLog.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Log</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-1">
-                {fileLog.map((entry) => (
-                  <LogRow
-                    key={entry.id}
-                    entry={entry}
-                    expanded={expandedIds.has(entry.id)}
-                    onToggle={() => toggleExpanded(entry.id)}
-                    previewUrl={previewUrls.get(entry.filename) ?? null}
-                  />
-                ))}
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        <TabsContent value="preview" className="flex flex-col gap-6">
-          {result && (
-            <>
-              <SummaryCard summary={result.summary} templateUsed={result.templateUsed} />
-              <ExcelPreview preview={result.preview} />
-              <DownloadPanel downloadUrl={result.downloadUrl} errorReportUrl={result.errorReportUrl} />
-            </>
-          )}
-        </TabsContent>
-      </Tabs>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+      )}
     </main>
   );
 }
@@ -306,12 +330,12 @@ function LogRow({
   onToggle,
   previewUrl,
 }: {
-  entry: LogEntry;
+  entry: FileProgressEvent;
   expanded: boolean;
   onToggle: () => void;
   previewUrl: string | null;
 }) {
-  const hasDetails = entry.rows.length > 0 || Boolean(previewUrl) || Boolean(entry.error) || entry.warnings.length > 0;
+  const hasDetails = Boolean(previewUrl) || Boolean(entry.error) || entry.warnings.length > 0;
 
   return (
     <div className="border-b py-1.5 last:border-0">
@@ -363,56 +387,8 @@ function LogRow({
               (Preview unavailable — this file came from inside a ZIP.)
             </p>
           )}
-
-          {entry.rows.length > 0 && <ExtractedRowsTable rows={entry.rows} />}
         </div>
       )}
-    </div>
-  );
-}
-
-function ExtractedRowsTable({ rows }: { rows: ExtractedRow[] }) {
-  return (
-    <div>
-      <p className="mb-1 text-xs font-medium text-muted-foreground">Extracted rows</p>
-      <div className="overflow-x-auto rounded border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Item</TableHead>
-              <TableHead>HS Code</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Qty</TableHead>
-              <TableHead>UQC</TableHead>
-              <TableHead>Rate</TableHead>
-              <TableHead>FOB</TableHead>
-              <TableHead>Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((row, i) => (
-              <TableRow key={i}>
-                <TableCell>{row.itemNumber ?? "—"}</TableCell>
-                <TableCell>{row.hsCode ?? "—"}</TableCell>
-                <TableCell className="max-w-[16rem] truncate">{row.description ?? "—"}</TableCell>
-                <TableCell>{row.quantity ?? "—"}</TableCell>
-                <TableCell>{row.uqc ?? "—"}</TableCell>
-                <TableCell>{row.rate ?? "—"}</TableCell>
-                <TableCell>{row.fob ?? "—"}</TableCell>
-                <TableCell>
-                  {row.appended ? (
-                    <Badge variant="secondary">Added</Badge>
-                  ) : row.skippedReason === "duplicate" ? (
-                    <Badge variant="outline">Duplicate</Badge>
-                  ) : (
-                    <Badge variant="destructive">No key</Badge>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
     </div>
   );
 }

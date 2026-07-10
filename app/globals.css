@@ -48,3 +48,16 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ExcelPreview (AG Grid) row styling — rowClassRules in ExcelPreview.tsx
+   attach these classes; AG Grid's Theming API doesn't expose a "new row"
+   concept, so it's layered on as plain CSS on top of the grid's own rows. */
+.row-odd {
+  background-color: hsl(var(--muted) / 0.4);
+}
+.row-new {
+  background-color: rgb(220 252 231) !important; /* green-100 */
+}
+.dark .row-new {
+  background-color: rgb(20 83 45 / 0.35) !important; /* green-900 @ 35% */
+}

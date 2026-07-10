@@ -51,31 +51,30 @@ If you picked the wrong file, click **Remove** next to it in the list.
 
 ### 3. Click Extract
 
-Click the big **Extract** button. While it runs, you'll see:
+Click the big **Extract** button. While it runs, a **Progress** section
+shows:
 
 - **PDFs Found / Processed / Errors** — how far along it is
 - **Rows Appended / Rows Skipped** — new rows added vs. rows that were
   already in the workbook (so nothing gets duplicated)
-- A **Log** at the bottom listing every file as it finishes, and whether it
-  succeeded or failed
+- **Current PDF** — the most recently finished file
 
 This can take anywhere from a few seconds to a few minutes depending on how
 many PDFs you uploaded.
 
-### 4. Check the results in Preview
+### 4. Check the results in Excel Preview
 
-When extraction finishes, the page automatically switches to the **Preview**
-tab. This shows the whole updated Excel file right in your browser — you
-don't need to download anything to check it:
+When extraction finishes, a green **✓ Extraction completed successfully**
+banner appears with totals, and right below it an **Excel Preview**
+section shows the whole updated workbook — you don't need to download
+anything to check it:
 
-- A green **✓ Extraction completed successfully** banner with totals.
 - The full spreadsheet, with new rows **highlighted in light green** so
   you can spot exactly what was just added.
-- A **search box** above the table — type anything to instantly find rows
+- A **search box** above the grid — type anything to instantly find rows
   containing it, across every column.
-- A small **Filter…** box under each column heading, to narrow down to one
-  column at a time (e.g. type a Shipping Bill Number to find just that
-  bill).
+- Click the small filter icon in a column heading to narrow down to just
+  that column (e.g. filter Shipping Bill No to find one specific bill).
 - Click any **column heading** to sort by that column; click again to
   reverse the sort. This only changes how you're *looking* at the data —
   it doesn't change the actual file.
@@ -87,7 +86,7 @@ right before you save it.
 
 ### 5. Download your results
 
-Once you're happy with what you see in Preview:
+Directly below the Excel Preview:
 
 - **Download Updated Excel** — click this to save the file. It downloads
   exactly what you saw in the preview — nothing is regenerated.
@@ -95,6 +94,17 @@ Once you're happy with what you see in Preview:
   read. Open it to see which files failed and why.
 
 That's it — save the downloaded Excel file wherever you keep your records.
+
+### Checking what happened (optional)
+
+Below the download buttons there's a **Processing Log** section — closed
+by default, since the Excel Preview above is usually all you need. Click it
+to expand a plain activity feed: when processing started, one line per
+file with its status and timing, and a final summary line. Click a
+file's line to expand it further and see any warnings, its error message
+(if it failed), and the uploaded PDF itself (unless it came from inside a
+ZIP). The log never shows extracted field values — that's what the Excel
+Preview section is for.
 
 ## Doing this again later (adding more PDFs)
 

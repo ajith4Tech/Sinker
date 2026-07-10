@@ -60,12 +60,17 @@ never by re-opening the file it just wrote — and returns every data row
 (pre-existing and newly-appended alike) as plain JSON. That payload rides
 along on the same final NDJSON event Node already sends, so the browser
 never has to download the `.xlsx` to know what's in it. `ExcelPreview.tsx`
-renders that JSON with TanStack Table + TanStack Virtual (windowed
-rendering — only rows scrolled into view are ever mounted, so this stays
-smooth at 20,000+ rows) entirely client-side: sorting, per-column filters,
-and global search only ever reorder/hide what's on screen and never touch
-the workbook file. Clicking **Download Updated Excel** serves the file
-`parser.py` already saved to disk — nothing is regenerated.
+renders that JSON with AG Grid Community — native row virtualization, sort,
+per-column filter, and quick-filter search, all entirely client-side and
+never touching the workbook file. Clicking **Download Updated Excel** serves
+the file `parser.py` already saved to disk — nothing is regenerated.
+
+**The Processing Log never shows extracted field values.** It's a plain
+chronological activity feed (`Processing started` / one line per finished
+PDF, status + timing only / `Extraction complete — ...`) — collapsed by
+default, because after a run finishes the Excel Preview above it is the
+thing worth looking at, not a log. Actual extracted values only ever
+appear in the Excel Preview grid.
 
 ## Folder structure
 
@@ -78,8 +83,8 @@ sinker/
       extract/route.ts                POST: streams NDJSON while a batch runs
       download/[runId]/[file]/route.ts  GET: serves + deletes one output file
   components/
-    upload-client.tsx                 page state/interactivity: upload, extract, tabs
-    ExcelPreview.tsx                  virtualized, sortable, filterable worksheet table
+    upload-client.tsx                 page state/interactivity: upload, extract, log
+    ExcelPreview.tsx                  AG Grid worksheet preview (sort/filter/search)
     SummaryCard.tsx                   "Extraction completed" banner + stats
     DownloadPanel.tsx                 Download Updated Excel / Download Error Report
     file-drop-zone.tsx                 drag-and-drop / click-to-browse input
@@ -127,7 +132,7 @@ Browser (UploadClient)
         10. writer.to_preview() — convert the in-memory worksheet to JSON, once
         11. print final "summary" event (includes that JSON)
   <- NDJSON stream (Node translates "summary" into "done" + download URLs + preview)
-  -> page auto-switches to the Preview tab, renders the worksheet from that JSON
+  -> the page's "Excel Preview" section appears, rendering the worksheet from that JSON
   -> user reviews rows, then clicks "Download Updated Excel"
   -> GET /api/download/<runId>/workbook.xlsx (and /errors.csv if present)
        reads the file into memory, deletes it from disk, returns it
@@ -136,33 +141,55 @@ Browser (UploadClient)
 ## Excel preview
 
 `ExcelPreview.tsx` renders `WorksheetPreview` (from `lib/types.ts`) — the
-JSON `ExcelWriter.to_preview()` produced. It's read-only: nothing in this
-component can write back to the workbook, sort/filter/search only affect
-what's rendered.
+JSON `ExcelWriter.to_preview()` produced — using **AG Grid Community**
+(`ag-grid-react`). It's read-only: no column has `editable: true`, and
+nothing in this component can write back to the workbook. Sort, filter,
+and search only ever change what's *displayed*.
 
 - **Row identity**: each row carries its real 1-based Excel row number
-  (`rowNumber`), shown in the leftmost `#` column and preserved through
-  sorting/filtering — exactly like Excel's own row numbers stay put when you
-  filter.
+  (`rowNumber`), shown in a pinned leftmost `#` column and preserved
+  through sorting/filtering — exactly like Excel's own row numbers stay put
+  when you filter.
 - **New-row highlight**: any row `ExcelWriter` appended *this run*
-  (`isNew: true`) gets a light green background; every pre-existing row
-  (including one that "won" a duplicate check and stayed as-is) renders
-  with the normal alternating white/gray. There's nothing to distinguish
-  for skipped duplicates specifically — they were never appended, so the
-  existing row they matched is just... already there.
-- **Virtualization**: `@tanstack/react-virtual` windows the row list:
-  regardless of whether there are 50 or 50,000 rows, only the ones
-  currently scrolled into view (plus a small overscan buffer) exist as DOM
-  nodes at any moment.
-- **Sorting / filtering / search**: all `@tanstack/react-table` state
-  (`sorting`, `columnFilters`, `globalFilter`) — purely client-side,
-  recomputed from the same in-memory row array, never re-fetched.
-- Deliberately **not** a literal `<table>`/`<tr>`/`<td>` — a sticky header
-  built from real DOM rows and a body of absolutely-positioned virtualized
-  rows can't share native table layout for column alignment, so both are
-  divs sized with matching explicit widths (the same pattern TanStack's own
-  Virtual+Table docs use). The tradeoff is losing some native table a11y
-  semantics in exchange for smooth scrolling at scale.
+  (`isNew: true`) gets a light green background via a `rowClassRules`
+  rule (`.row-new` in `app/globals.css`); every pre-existing row (including
+  one that "won" a duplicate check and stayed as-is) renders with the
+  normal alternating shading. There's nothing to distinguish for skipped
+  duplicates specifically — they were never appended, so the existing row
+  they matched is just... already there.
+- **Virtualization, sorting, filtering, quick-filter search**: all native
+  AG Grid Community behavior — `rowData`/`columnDefs` are a direct mapping
+  of `WorksheetPreview`, not a separately-built table model, so the preview
+  can never drift from what "Download Updated Excel" actually serves.
+  Regardless of whether the sheet has 50 or 50,000 rows, AG Grid only ever
+  mounts the rows currently scrolled into view.
+- Chosen over TanStack Table for this pass specifically because AG Grid's
+  default look already reads as "a spreadsheet" with no extra styling work
+  — the tradeoff is a meaningfully larger client bundle (AG Grid Community
+  is a full-featured grid engine, not a headless library), which is
+  acceptable for an internal tool but worth knowing about.
+
+## Page layout
+
+The page is one linear flow, top to bottom, in this fixed order — no tabs:
+
+1. Upload PDFs / ZIP
+2. Excel Template (default or custom)
+3. Extract button
+4. Progress (live counts + current PDF, while a run is active)
+5. Summary (appears once a run finishes)
+6. **Excel Preview** — the primary thing to look at after extraction
+7. Download Updated Excel / Download Error Report
+8. Processing Log — a `Collapsible`, closed by default
+
+The Processing Log is deliberately last and closed by default: once
+there's a real result, the Excel Preview above it is what matters, not a
+scrolling log. The log itself is a plain activity feed — `"Processing
+started"`, one line per finished PDF (filename, status, timing — clicking
+one reveals its warnings/error and, if it wasn't from inside a ZIP, the
+uploaded PDF itself), and a final `"Extraction complete — ..."` line. It
+never shows a row's extracted field values — that's what the Excel Preview
+section is for.
 
 ## Incremental processing & duplicate prevention
 
@@ -218,8 +245,8 @@ carry forward.
   nothing is written to disk until the single final `save()`.
 - The worksheet-to-JSON conversion for the preview happens exactly once,
   after `save()`, from the same in-memory object — not a second file read.
-- The preview itself never re-renders 20,000 DOM rows: `@tanstack/react-virtual`
-  only mounts the rows currently scrolled into view.
+- The preview itself never re-renders 20,000 DOM rows: AG Grid's built-in
+  row virtualization only mounts the rows currently scrolled into view.
 
 ## Error handling
 
@@ -301,3 +328,11 @@ python3 generate_template.py   # only needed if COLUMNS in excel_writer.py chang
   Next.js itself (a build-time CSS stringification issue, not something
   triggered by anything this app does at runtime). Fixing requires a Next.js
   major-version bump; tracked, not fixed, in this pass.
+- **AG Grid Community noticeably increases the page's JS bundle** (the
+  homepage's first-load JS grew from ~150 kB to ~430 kB after switching from
+  TanStack Table). Acceptable for an internal tool used by one person on a
+  Codespace, but worth knowing if this ever needs to be fast on a slow
+  connection.
+- **The Excel Preview's light/dark AG Grid theme isn't wired to the app's
+  theme toggle** — it always renders AG Grid's default (light) Quartz theme
+  regardless of the rest of the page's color scheme.
