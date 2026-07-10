@@ -1,0 +1,30 @@
+{
+  "processed": {
+    "sample_single_invoice.pdf": {
+      "sha256": "291d2a7d1e28618cb14e391ff8081661391c65a97637f2d6bcdf6e7f8a5bf665",
+      "size": 516072,
+      "rows": 1,
+      "status": "Completed",
+      "processed_at": "2026-07-10T17:11:06Z"
+    },
+    "sample_multi_invoice.pdf": {
+      "sha256": "dbfea2bfe954b1747378093fde9d9f9e2500106431b941279abee6d76cc6183d",
+      "size": 549100,
+      "rows": 5,
+      "status": "Completed",
+      "processed_at": "2026-07-10T17:11:07Z"
+    }
+  },
+  "stats": {
+    "totalPdfsProcessed": 2,
+    "uniquePdfs": 2,
+    "rowsExtracted": 6,
+    "rowsAdded": 6,
+    "duplicatesSkipped": 0,
+    "failedPdfs": 0,
+    "workbookTotalRows": 6,
+    "averageRowsPerPdf": 3.0,
+    "lastExtraction": "2026-07-10T17:12:06Z",
+    "lastProcessingTimeMs": 39
+  }
+}

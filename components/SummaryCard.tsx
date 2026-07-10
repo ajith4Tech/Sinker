@@ -23,8 +23,11 @@ export function SummaryCard({
   templateUsed,
 }: {
   summary: ExtractSummary;
-  templateUsed: "default" | "custom";
+  templateUsed: "default" | "custom" | "persistent";
 }) {
+  const templateLabel =
+    templateUsed === "custom" ? "Custom" : templateUsed === "persistent" ? "Persistent workbook" : "Default";
+
   return (
     <Card>
       <CardContent className="flex flex-col gap-4 pt-6">
@@ -34,13 +37,15 @@ export function SummaryCard({
         </div>
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Stat label="PDFs Uploaded" value={summary.totalPdfs} />
-          <Stat label="Rows Extracted" value={summary.rowsExtracted} />
+          <Stat label="Processed PDFs" value={summary.successfulPdfs} />
+          <Stat label="Skipped PDFs" value={summary.skippedPdfs} />
+          <Stat label="Changed PDFs" value={summary.changedPdfs} />
+          <Stat label="Failed PDFs" value={summary.failedPdfs} />
           <Stat label="Rows Added" value={summary.rowsAppended} />
           <Stat label="Duplicate Rows Skipped" value={summary.rowsSkipped} />
-          <Stat label="Failed PDFs" value={summary.failedPdfs} />
+          <Stat label="Workbook Total Rows" value={summary.workbookTotalRows} />
           <Stat label="Processing Time" value={formatElapsed(summary.processingTimeMs)} />
-          <Stat label="Template Used" value={templateUsed === "custom" ? "Custom" : "Default"} />
+          <Stat label="Template Used" value={templateLabel} />
         </div>
       </CardContent>
     </Card>

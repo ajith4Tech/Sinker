@@ -1,5 +1,5 @@
-import { UploadClient } from "@/components/upload-client";
+import { SinkerApp } from "@/components/SinkerApp";
 
 export default function Home() {
-  return <UploadClient />;
+  return <SinkerApp />;
 }

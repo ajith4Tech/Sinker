@@ -39,15 +39,40 @@ export interface ExtractedRow {
   skippedReason: "duplicate" | "missing_key" | null;
 }
 
-/** One line per PDF as it finishes, streamed to the browser while a run is in progress. */
+/** File classification against data/state.json, computed before any parsing happens. */
+export type FileClassification = "new" | "changed" | "unchanged";
+
+/**
+ * Emitted once, immediately after upload and file hashing, before any PDF is
+ * parsed — lets the UI show "N new / M already processed / K changed"
+ * ahead of the Progress section.
+ */
+export interface UploadSummaryEvent {
+  type: "upload_summary";
+  uploadedPdfs: number;
+  newPdfs: number;
+  alreadyProcessedPdfs: number;
+  changedPdfs: number;
+  files: Array<{ filename: string; classification: FileClassification }>;
+}
+
+/** Emitted right before a new/changed PDF is submitted for parsing (unchanged PDFs never get one — they go straight to "skipped"). */
+export interface FileStartEvent {
+  type: "file_start";
+  filename: string;
+}
+
+/** One line per PDF as it finishes (or is skipped), streamed to the browser while a run is in progress. */
 export interface FileProgressEvent {
   type: "file";
   filename: string;
-  status: "processed" | "failed";
+  status: "processed" | "failed" | "skipped";
+  classification: FileClassification;
   portCode: string | null;
   shippingBillNo: string | null;
   shippingBillDate: string | null;
   invoiceCount: number;
+  rowsExtracted: number;
   rowsAppended: number;
   rowsSkipped: number;
   processingTimeMs: number;
@@ -68,6 +93,7 @@ export interface TotalsProgressEvent {
   pdfsFound: number;
   pdfsProcessed: number;
   pdfsFailed: number;
+  pdfsSkipped: number;
   rowsExtracted: number;
   rowsAppended: number;
   rowsSkipped: number;
@@ -151,7 +177,7 @@ export interface DoneEvent {
   summary: ExtractSummary;
   downloadUrl: string;
   errorReportUrl: string | null;
-  templateUsed: "default" | "custom";
+  templateUsed: "default" | "custom" | "persistent";
   workbook: WorkbookModel;
   validation: ValidationResult;
   /** 1-indexed worksheet row numbers appended during this run (vs.
@@ -165,14 +191,56 @@ export interface FatalEvent {
   message: string;
 }
 
-export type ExtractEvent = FileProgressEvent | TotalsProgressEvent | DoneEvent | FatalEvent;
+export type ExtractEvent =
+  | UploadSummaryEvent
+  | FileStartEvent
+  | FileProgressEvent
+  | TotalsProgressEvent
+  | DoneEvent
+  | FatalEvent;
 
 export interface ExtractSummary {
   totalPdfs: number;
   successfulPdfs: number;
   failedPdfs: number;
+  skippedPdfs: number;
+  newPdfs: number;
+  changedPdfs: number;
   rowsExtracted: number;
   rowsAppended: number;
   rowsSkipped: number;
+  workbookTotalRows: number;
   processingTimeMs: number;
+}
+
+// ---------------------------------------------------------------------
+// Statistics tab (GET /api/state) and Processing Log tab (GET /api/logs) —
+// both read persisted JSON files verbatim, never recomputed from PDFs.
+// ---------------------------------------------------------------------
+
+export interface PersistedStats {
+  totalPdfsProcessed: number;
+  uniquePdfs: number;
+  rowsExtracted: number;
+  rowsAdded: number;
+  duplicatesSkipped: number;
+  failedPdfs: number;
+  workbookTotalRows: number;
+  averageRowsPerPdf: number;
+  lastExtraction: string | null;
+  lastProcessingTimeMs: number;
+}
+
+export type LogStatus = "Queued" | "Processing" | "Completed" | "Skipped" | "Failed";
+
+export interface LogEntry {
+  filename: string;
+  status: LogStatus;
+  rowsExtracted: number;
+  rowsAdded: number;
+  duplicatesSkipped: number;
+  processingTimeMs: number;
+  startedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
 }

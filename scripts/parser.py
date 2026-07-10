@@ -37,6 +37,16 @@ Verification: after saving, every LineRecord actually written is checked
 against the workbook cells it should have produced (see verify.py) — any
 missing/incorrect/shifted value fails the run loudly instead of shipping a
 silently-wrong workbook.
+
+Incremental processing (see state_store.py): every discovered PDF is
+sha256-hashed and classified against data/state.json (new / changed /
+unchanged) *before* any parsing happens — this is emitted as an
+"upload_summary" event immediately. Unchanged PDFs are never parsed at all.
+data/state.json is purely an index for this skip decision plus a small
+cumulative `stats` block for the Statistics tab — the workbook remains the
+only source of truth for actual extracted records. data/logs.json is an
+append-only processing history for the Processing Log tab. Both files are
+loaded once and saved once per run, same as the workbook.
 """
 
 from __future__ import annotations
@@ -47,15 +57,21 @@ import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime, timezone
 
+import state_store
 from excel_writer import ExcelWriter
 from line_records import build_line_records
 from models import ShippingBillResult
 from shipping_bill_parser import ShippingBillParser
-from template_schema import ATTRS, COLUMNS, INVOICE_COL, ITEM_COL, SHIPPING_BILL_COL
+from template_schema import ATTRS, COLUMNS, HEADER_ROWS, INVOICE_COL, ITEM_COL, SHIPPING_BILL_COL
 from utils import discover_pdf_paths
 from verify import verify_workbook
 from workbook_reader import read_workbook
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _parse_one(path: str) -> dict:
@@ -150,22 +166,98 @@ def main(argv: list[str]) -> int:
         _emit({"type": "fatal", "message": f"Could not open the template workbook: {exc}"})
         return 1
 
+    # --- Incremental processing: classify every discovered PDF against
+    # data/state.json (sha256 + size) BEFORE any parsing happens. Unchanged
+    # files are never re-read past this point — "Never re-parse unchanged
+    # PDFs" — and this is reported to the browser immediately, before
+    # extraction starts, as the "Upload Summary".
+    state = state_store.load_state()
+    logs = state_store.load_logs()
+
+    file_meta: dict[str, dict] = {}
+    for path in pdf_paths:
+        filename = os.path.basename(path)
+        sha256 = state_store.sha256_file(path)
+        size = os.path.getsize(path)
+        classification = state_store.classify_file(state, filename, sha256, size)
+        file_meta[path] = {"filename": filename, "sha256": sha256, "size": size, "classification": classification}
+
+    new_count = sum(1 for m in file_meta.values() if m["classification"] == "new")
+    changed_count = sum(1 for m in file_meta.values() if m["classification"] == "changed")
+    unchanged_count = sum(1 for m in file_meta.values() if m["classification"] == "unchanged")
+
+    _emit({
+        "type": "upload_summary",
+        "uploadedPdfs": len(pdf_paths),
+        "newPdfs": new_count,
+        "alreadyProcessedPdfs": unchanged_count,
+        "changedPdfs": changed_count,
+        "files": [{"filename": m["filename"], "classification": m["classification"]} for m in file_meta.values()],
+    })
+
+    to_process = [p for p in pdf_paths if file_meta[p]["classification"] != "unchanged"]
+    to_skip = [p for p in pdf_paths if file_meta[p]["classification"] == "unchanged"]
+
     totals = {
         "pdfsFound": len(pdf_paths),
         "pdfsProcessed": 0,
         "pdfsFailed": 0,
+        "pdfsSkipped": 0,
         "rowsExtracted": 0,
         "rowsAppended": 0,
         "rowsSkipped": 0,
     }
     _emit({"type": "totals", **totals})
 
+    run_started_at = _now_iso()
+
+    # Unchanged PDFs: one Skipped log row each, no parsing, no workbook I/O.
+    for path in to_skip:
+        filename = file_meta[path]["filename"]
+        previously = state["processed"].get(filename, {})
+        totals["pdfsSkipped"] += 1
+        _emit({
+            "type": "file",
+            "filename": filename,
+            "status": "skipped",
+            "classification": "unchanged",
+            "portCode": None,
+            "shippingBillNo": None,
+            "shippingBillDate": None,
+            "invoiceCount": 0,
+            "rowsExtracted": previously.get("rows", 0),
+            "rowsAppended": 0,
+            "rowsSkipped": 0,
+            "processingTimeMs": 0,
+            "error": None,
+            "warnings": [
+                f"Unchanged since last run (sha256 match) — skipped re-parsing; "
+                f"{previously.get('rows', 0)} row(s) previously extracted."
+            ],
+            "rows": [],
+        })
+        _emit({"type": "totals", **totals})
+        logs.append({
+            "filename": filename,
+            "status": "Skipped",
+            "rowsExtracted": previously.get("rows", 0),
+            "rowsAdded": 0,
+            "duplicatesSkipped": 0,
+            "processingTimeMs": 0,
+            "startedAt": run_started_at,
+            "completedAt": run_started_at,
+            "error": None,
+        })
+
+    for path in to_process:
+        _emit({"type": "file_start", "filename": file_meta[path]["filename"]})
+
     errors: list[dict] = []
     written_records: list[dict] = []  # every LineRecord actually written, for Part 4 verification
     max_workers = manifest.get("max_workers") or os.cpu_count() or 4
 
     with ProcessPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_parse_one, path): path for path in pdf_paths}
+        futures = {pool.submit(_parse_one, path): path for path in to_process}
 
         for future in as_completed(futures):
             path = futures[future]
@@ -175,14 +267,29 @@ def main(argv: list[str]) -> int:
             if not outcome["ok"]:
                 totals["pdfsFailed"] += 1
                 errors.append({"filename": filename, "error": outcome["error"]})
+                # Deliberately NOT written to state["processed"] — a failed
+                # PDF must be retried next upload even if it hasn't changed.
+                logs.append({
+                    "filename": filename,
+                    "status": "Failed",
+                    "rowsExtracted": 0,
+                    "rowsAdded": 0,
+                    "duplicatesSkipped": 0,
+                    "processingTimeMs": outcome["processingTimeMs"],
+                    "startedAt": run_started_at,
+                    "completedAt": _now_iso(),
+                    "error": outcome["error"],
+                })
                 _emit({
                     "type": "file",
                     "filename": filename,
                     "status": "failed",
+                    "classification": file_meta[path]["classification"],
                     "portCode": None,
                     "shippingBillNo": None,
                     "shippingBillDate": None,
                     "invoiceCount": 0,
+                    "rowsExtracted": 0,
                     "rowsAppended": 0,
                     "rowsSkipped": 0,
                     "processingTimeMs": outcome["processingTimeMs"],
@@ -246,14 +353,36 @@ def main(argv: list[str]) -> int:
             totals["rowsAppended"] += rows_appended
             totals["rowsSkipped"] += rows_skipped
 
+            meta = file_meta[path]
+            state["processed"][filename] = {
+                "sha256": meta["sha256"],
+                "size": meta["size"],
+                "rows": len(line_records),
+                "status": "Completed",
+                "processed_at": _now_iso(),
+            }
+            logs.append({
+                "filename": filename,
+                "status": "Completed",
+                "rowsExtracted": len(line_records),
+                "rowsAdded": rows_appended,
+                "duplicatesSkipped": rows_skipped,
+                "processingTimeMs": outcome["processingTimeMs"],
+                "startedAt": run_started_at,
+                "completedAt": _now_iso(),
+                "error": None,
+            })
+
             _emit({
                 "type": "file",
                 "filename": filename,
                 "status": "processed",
+                "classification": meta["classification"],
                 "portCode": result_dict["port_code"],
                 "shippingBillNo": result_dict["shipping_bill_no"],
                 "shippingBillDate": result_dict["shipping_bill_date"],
                 "invoiceCount": len(result_dict["invoices"]),
+                "rowsExtracted": len(line_records),
                 "rowsAppended": rows_appended,
                 "rowsSkipped": rows_skipped,
                 "processingTimeMs": outcome["processingTimeMs"],
@@ -289,6 +418,29 @@ def main(argv: list[str]) -> int:
         for rec in written_records if rec["_cell_map"]
     })
 
+    processing_time_ms = int((time.monotonic() - batch_start) * 1000)
+    workbook_total_rows = max(0, workbook_model["maxRow"] - HEADER_ROWS)
+
+    # --- Persist the incremental-processing index and processing history —
+    # load once (already done above), update in memory, save once each.
+    # state.json's `stats` block is a running cumulative total so the
+    # Statistics tab can load it verbatim, instantly, without ever opening a
+    # PDF or recomputing anything.
+    stats = state["stats"]
+    stats["totalPdfsProcessed"] += totals["pdfsProcessed"]
+    stats["rowsExtracted"] += totals["rowsExtracted"]
+    stats["rowsAdded"] += totals["rowsAppended"]
+    stats["duplicatesSkipped"] += totals["rowsSkipped"]
+    stats["failedPdfs"] += totals["pdfsFailed"]
+    stats["uniquePdfs"] = len(state["processed"])
+    stats["workbookTotalRows"] = workbook_total_rows
+    stats["averageRowsPerPdf"] = round(stats["rowsAdded"] / stats["uniquePdfs"], 2) if stats["uniquePdfs"] else 0
+    stats["lastExtraction"] = _now_iso()
+    stats["lastProcessingTimeMs"] = processing_time_ms
+
+    state_store.save_state(state)
+    state_store.save_logs(logs)
+
     _emit({
         "type": "summary",
         "newRowNumbers": new_row_numbers,
@@ -296,10 +448,14 @@ def main(argv: list[str]) -> int:
             "totalPdfs": len(pdf_paths),
             "successfulPdfs": totals["pdfsProcessed"],
             "failedPdfs": totals["pdfsFailed"],
+            "skippedPdfs": totals["pdfsSkipped"],
+            "newPdfs": new_count,
+            "changedPdfs": changed_count,
             "rowsExtracted": totals["rowsExtracted"],
             "rowsAppended": totals["rowsAppended"],
             "rowsSkipped": totals["rowsSkipped"],
-            "processingTimeMs": int((time.monotonic() - batch_start) * 1000),
+            "workbookTotalRows": workbook_total_rows,
+            "processingTimeMs": processing_time_ms,
         },
         "hadErrors": bool(errors),
         "validation": validation,

@@ -5,11 +5,10 @@ import { OUTPUT_DIR_ROOT } from "@/lib/run-extract";
 
 const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// The workbook itself is no longer a per-run disposable file — it's
+// persistent server-side state served by /api/download/workbook instead.
+// This route now only serves the per-run errors.csv.
 const FILES = {
-  "workbook.xlsx": {
-    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    downloadName: "sinker-output.xlsx",
-  },
   "errors.csv": {
     contentType: "text/csv",
     downloadName: "sinker-errors.csv",
@@ -19,7 +18,7 @@ const FILES = {
 type FileName = keyof typeof FILES;
 
 function isFileName(value: string): value is FileName {
-  return value === "workbook.xlsx" || value === "errors.csv";
+  return value === "errors.csv";
 }
 
 // Downloads are one-shot: each file is deleted from disk immediately after

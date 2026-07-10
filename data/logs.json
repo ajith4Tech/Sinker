@@ -1,0 +1,48 @@
+{
+  "logs": [
+    {
+      "filename": "sample_single_invoice.pdf",
+      "status": "Completed",
+      "rowsExtracted": 1,
+      "rowsAdded": 1,
+      "duplicatesSkipped": 0,
+      "processingTimeMs": 422,
+      "startedAt": "2026-07-10T17:11:06Z",
+      "completedAt": "2026-07-10T17:11:06Z",
+      "error": null
+    },
+    {
+      "filename": "sample_multi_invoice.pdf",
+      "status": "Completed",
+      "rowsExtracted": 5,
+      "rowsAdded": 5,
+      "duplicatesSkipped": 0,
+      "processingTimeMs": 966,
+      "startedAt": "2026-07-10T17:11:06Z",
+      "completedAt": "2026-07-10T17:11:07Z",
+      "error": null
+    },
+    {
+      "filename": "sample_multi_invoice.pdf",
+      "status": "Skipped",
+      "rowsExtracted": 5,
+      "rowsAdded": 0,
+      "duplicatesSkipped": 0,
+      "processingTimeMs": 0,
+      "startedAt": "2026-07-10T17:12:06Z",
+      "completedAt": "2026-07-10T17:12:06Z",
+      "error": null
+    },
+    {
+      "filename": "sample_single_invoice.pdf",
+      "status": "Skipped",
+      "rowsExtracted": 1,
+      "rowsAdded": 0,
+      "duplicatesSkipped": 0,
+      "processingTimeMs": 0,
+      "startedAt": "2026-07-10T17:12:06Z",
+      "completedAt": "2026-07-10T17:12:06Z",
+      "error": null
+    }
+  ]
+}
