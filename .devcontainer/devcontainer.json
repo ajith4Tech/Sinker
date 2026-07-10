@@ -1,0 +1,22 @@
+{
+  "name": "Sinker",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-20",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Sinker",
+      "onAutoForward": "openPreview"
+    }
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["USER_MANUAL.md"]
+    }
+  }
+}
