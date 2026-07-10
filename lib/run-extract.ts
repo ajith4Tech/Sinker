@@ -146,6 +146,16 @@ async function* runParserProcess(
 ): AsyncGenerator<ExtractEvent> {
   const child = spawn(PYTHON_BIN, [PARSER_SCRIPT, manifestPath]);
 
+  // spawn() failures (bad PYTHON_BIN, python3 missing, permission denied,
+  // ...) surface as an 'error' event on the child process. With no
+  // listener, Node treats that as an unhandled error and can crash the
+  // whole server process instead of just failing this request — capturing
+  // it here turns a misconfigured PYTHON_BIN into an ordinary "fatal" event.
+  const spawnError: { current: Error | null } = { current: null };
+  child.on("error", (err) => {
+    spawnError.current = err;
+  });
+
   let stderr = "";
   child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
@@ -190,6 +200,16 @@ async function* runParserProcess(
   }
 
   const exitCode: number = await new Promise((resolve) => child.on("close", (code) => resolve(code ?? 1)));
+
+  if (spawnError.current) {
+    yield {
+      type: "fatal",
+      message:
+        `Could not start the Python extraction process ("${PYTHON_BIN}"): ${spawnError.current.message}. ` +
+        `Check that PYTHON_BIN in .env points to a valid Python interpreter with scripts/requirements.txt installed.`,
+    };
+    return;
+  }
 
   if (!sawTerminalEvent) {
     yield {
