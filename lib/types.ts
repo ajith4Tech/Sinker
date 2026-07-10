@@ -73,11 +73,31 @@ export interface TotalsProgressEvent {
   rowsSkipped: number;
 }
 
+/** One row of the destination worksheet — pre-existing or newly appended. */
+export interface WorksheetRow {
+  rowNumber: number; // 1-based Excel row number, stable across client-side sort/filter
+  values: (string | null)[]; // one per WorksheetPreview.columns, in order
+  isNew: boolean; // appended during this run vs. already present in the template
+}
+
+/**
+ * The whole destination worksheet, converted to JSON exactly once by
+ * ExcelWriter.to_preview() right after the workbook is saved — never
+ * re-parsed from disk. This is what ExcelPreview renders; the workbook file
+ * itself is only touched again when the user clicks Download.
+ */
+export interface WorksheetPreview {
+  columns: string[];
+  rows: WorksheetRow[];
+}
+
 export interface DoneEvent {
   type: "done";
   summary: ExtractSummary;
   downloadUrl: string;
   errorReportUrl: string | null;
+  templateUsed: "default" | "custom";
+  preview: WorksheetPreview;
 }
 
 export interface FatalEvent {

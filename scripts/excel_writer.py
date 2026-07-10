@@ -14,6 +14,8 @@ never rescan" requirement for batches of thousands of PDFs.
 
 from __future__ import annotations
 
+from datetime import date, datetime, time
+
 from openpyxl import load_workbook
 
 # Column order written to the sheet. Custom templates must use this same
@@ -52,6 +54,7 @@ class ExcelWriter:
         self._workbook = load_workbook(template_path)
         self._sheet = self._workbook.active
         self._seen_keys: set[str] = set()
+        self._new_rows: set[int] = set()
         self._next_row = self._scan_existing_rows()
 
     def _scan_existing_rows(self) -> int:
@@ -81,7 +84,35 @@ class ExcelWriter:
         for col, value in enumerate(values, start=1):
             self._sheet.cell(row=self._next_row, column=col, value=value)
         self._seen_keys.add(key)
+        self._new_rows.add(self._next_row)
         self._next_row += 1
 
     def save(self, output_path: str) -> None:
         self._workbook.save(output_path)
+
+    def to_preview(self) -> dict:
+        """Converts every data row currently in the worksheet (pre-existing
+        and newly-appended alike) into plain JSON — read from the in-memory
+        workbook we already have open, never by re-reading the saved file.
+        Call only after save(); the row range is fixed at that point."""
+        rows = []
+        for row_num in range(HEADER_ROW + 1, self._next_row):
+            values = [
+                _serialize_cell(self._sheet.cell(row=row_num, column=col).value)
+                for col in range(1, len(COLUMNS) + 1)
+            ]
+            rows.append({
+                "rowNumber": row_num,
+                "values": values,
+                "isNew": row_num in self._new_rows,
+            })
+        return {"columns": list(COLUMNS), "rows": rows}
+
+
+def _serialize_cell(value):
+    """openpyxl can hand back real datetime/date/time objects for cells
+    that already held Excel date types (e.g. in a pre-existing custom
+    template) — json.dumps can't serialize those directly."""
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    return value

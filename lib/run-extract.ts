@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ExtractEvent, ExtractSummary } from "@/lib/types";
+import type { ExtractEvent, ExtractSummary, WorksheetPreview } from "@/lib/types";
 
 const TEMP_ROOT = path.join(process.cwd(), "temp");
 const UPLOADS_ROOT = path.join(TEMP_ROOT, "uploads");
@@ -98,7 +98,8 @@ export async function* runExtract(input: ExtractInput): AsyncGenerator<ExtractEv
     const manifestPath = path.join(uploadDir, "manifest.json");
     await writeFile(manifestPath, JSON.stringify(manifest));
 
-    yield* runParserProcess(manifestPath, runId);
+    const templateUsed = input.customTemplate ? "custom" : "default";
+    yield* runParserProcess(manifestPath, runId, templateUsed);
   } finally {
     await rm(uploadDir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -108,9 +109,14 @@ interface ParserSummaryEvent {
   type: "summary";
   summary: ExtractSummary;
   hadErrors: boolean;
+  preview: WorksheetPreview;
 }
 
-async function* runParserProcess(manifestPath: string, runId: string): AsyncGenerator<ExtractEvent> {
+async function* runParserProcess(
+  manifestPath: string,
+  runId: string,
+  templateUsed: "default" | "custom"
+): AsyncGenerator<ExtractEvent> {
   const child = spawn(PYTHON_BIN, [PARSER_SCRIPT, manifestPath]);
 
   let stderr = "";
@@ -133,12 +139,14 @@ async function* runParserProcess(manifestPath: string, runId: string): AsyncGene
 
     if (event.type === "summary") {
       sawTerminalEvent = true;
-      const { summary, hadErrors } = event as unknown as ParserSummaryEvent;
+      const { summary, hadErrors, preview } = event as unknown as ParserSummaryEvent;
       yield {
         type: "done",
         summary,
         downloadUrl: `/api/download/${runId}/workbook.xlsx`,
         errorReportUrl: hadErrors ? `/api/download/${runId}/errors.csv` : null,
+        templateUsed,
+        preview,
       };
     } else if (event.type === "fatal" || event.type === "totals" || event.type === "file") {
       sawTerminalEvent = sawTerminalEvent || event.type === "fatal";

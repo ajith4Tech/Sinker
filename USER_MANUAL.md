@@ -1,8 +1,9 @@
 # Sinker — User Manual
 
 Sinker reads your Shipping Bill PDFs and adds the information from them as
-new rows in an Excel file. You upload PDFs, click one button, and download
-the updated Excel file.
+new rows in an Excel file. You upload PDFs, click one button, **check the
+results right there on the page**, and only then download the updated
+Excel file.
 
 ![Sinker screenshot](docs/screenshot.png)
 
@@ -61,12 +62,35 @@ Click the big **Extract** button. While it runs, you'll see:
 This can take anywhere from a few seconds to a few minutes depending on how
 many PDFs you uploaded.
 
-### 4. Download your results
+### 4. Check the results in Preview
 
-When it finishes, a **Summary** appears with totals, and two buttons:
+When extraction finishes, the page automatically switches to the **Preview**
+tab. This shows the whole updated Excel file right in your browser — you
+don't need to download anything to check it:
 
-- **Download Updated Workbook** — always appears. This is your Excel file
-  with the new rows added.
+- A green **✓ Extraction completed successfully** banner with totals.
+- The full spreadsheet, with new rows **highlighted in light green** so
+  you can spot exactly what was just added.
+- A **search box** above the table — type anything to instantly find rows
+  containing it, across every column.
+- A small **Filter…** box under each column heading, to narrow down to one
+  column at a time (e.g. type a Shipping Bill Number to find just that
+  bill).
+- Click any **column heading** to sort by that column; click again to
+  reverse the sort. This only changes how you're *looking* at the data —
+  it doesn't change the actual file.
+- Drag the edge of a column heading to make it wider or narrower.
+
+Scroll up and down, sort, search, filter as much as you like — none of it
+changes the Excel file. It's just a way to double-check everything looks
+right before you save it.
+
+### 5. Download your results
+
+Once you're happy with what you see in Preview:
+
+- **Download Updated Excel** — click this to save the file. It downloads
+  exactly what you saw in the preview — nothing is regenerated.
 - **Download Error Report** — only appears if one or more PDFs couldn't be
   read. Open it to see which files failed and why.
 

@@ -243,6 +243,11 @@ def main(argv: list[str]) -> int:
             csv_writer.writeheader()
             csv_writer.writerows(errors)
 
+    # Built from the workbook object already sitting in memory — never by
+    # re-opening the file we just saved. This is the one and only JSON
+    # conversion of the worksheet for the whole run.
+    preview = writer.to_preview()
+
     _emit({
         "type": "summary",
         "summary": {
@@ -255,6 +260,7 @@ def main(argv: list[str]) -> int:
             "processingTimeMs": int((time.monotonic() - batch_start) * 1000),
         },
         "hadErrors": bool(errors),
+        "preview": preview,
     })
     return 0
 

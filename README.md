@@ -1,11 +1,12 @@
 # Sinker
 
 A single-page internal tool: upload Shipping Bill PDFs (or a ZIP of them),
-click **Extract**, and download an updated Excel workbook with the new rows
-appended. No AI, no OCR — every value comes directly from text found in the
-PDF, or is left blank. No login, no database — the workbook you download
-*is* the record; feed it back in as your "custom template" next time and
-already-seen rows are skipped automatically.
+click **Extract**, review every row in an in-browser preview, then click
+**Download Updated Excel** once you're satisfied. No AI, no OCR — every
+value comes directly from text found in the PDF, or is left blank. No
+login, no database — the workbook you download *is* the record; feed it
+back in as your "custom template" next time and already-seen rows are
+skipped automatically.
 
 ## Architecture
 
@@ -52,6 +53,20 @@ matching header text — simplest option, and the only one that didn't
 require guessing at header-matching rules with no real custom templates to
 test against yet.
 
+**The worksheet is converted to JSON exactly once, from memory, never
+re-parsed.** Right after `writer.save(...)`, `ExcelWriter.to_preview()`
+walks the *same in-memory workbook object* `parser.py` already has open —
+never by re-opening the file it just wrote — and returns every data row
+(pre-existing and newly-appended alike) as plain JSON. That payload rides
+along on the same final NDJSON event Node already sends, so the browser
+never has to download the `.xlsx` to know what's in it. `ExcelPreview.tsx`
+renders that JSON with TanStack Table + TanStack Virtual (windowed
+rendering — only rows scrolled into view are ever mounted, so this stays
+smooth at 20,000+ rows) entirely client-side: sorting, per-column filters,
+and global search only ever reorder/hide what's on screen and never touch
+the workbook file. Clicking **Download Updated Excel** serves the file
+`parser.py` already saved to disk — nothing is regenerated.
+
 ## Folder structure
 
 ```
@@ -63,7 +78,10 @@ sinker/
       extract/route.ts                POST: streams NDJSON while a batch runs
       download/[runId]/[file]/route.ts  GET: serves + deletes one output file
   components/
-    upload-client.tsx                 all page state/interactivity
+    upload-client.tsx                 page state/interactivity: upload, extract, tabs
+    ExcelPreview.tsx                  virtualized, sortable, filterable worksheet table
+    SummaryCard.tsx                   "Extraction completed" banner + stats
+    DownloadPanel.tsx                 Download Updated Excel / Download Error Report
     file-drop-zone.tsx                 drag-and-drop / click-to-browse input
     ui/                                shadcn/ui primitives
   lib/
@@ -106,11 +124,45 @@ Browser (UploadClient)
               - print one NDJSON "file" + "totals" event
          8. workbook.save() — once, after every PDF is done
          9. write errors.csv if any PDF failed
-        10. print final "summary" event
-  <- NDJSON stream (Node translates "summary" into "done" + download URLs)
+        10. writer.to_preview() — convert the in-memory worksheet to JSON, once
+        11. print final "summary" event (includes that JSON)
+  <- NDJSON stream (Node translates "summary" into "done" + download URLs + preview)
+  -> page auto-switches to the Preview tab, renders the worksheet from that JSON
+  -> user reviews rows, then clicks "Download Updated Excel"
   -> GET /api/download/<runId>/workbook.xlsx (and /errors.csv if present)
        reads the file into memory, deletes it from disk, returns it
 ```
+
+## Excel preview
+
+`ExcelPreview.tsx` renders `WorksheetPreview` (from `lib/types.ts`) — the
+JSON `ExcelWriter.to_preview()` produced. It's read-only: nothing in this
+component can write back to the workbook, sort/filter/search only affect
+what's rendered.
+
+- **Row identity**: each row carries its real 1-based Excel row number
+  (`rowNumber`), shown in the leftmost `#` column and preserved through
+  sorting/filtering — exactly like Excel's own row numbers stay put when you
+  filter.
+- **New-row highlight**: any row `ExcelWriter` appended *this run*
+  (`isNew: true`) gets a light green background; every pre-existing row
+  (including one that "won" a duplicate check and stayed as-is) renders
+  with the normal alternating white/gray. There's nothing to distinguish
+  for skipped duplicates specifically — they were never appended, so the
+  existing row they matched is just... already there.
+- **Virtualization**: `@tanstack/react-virtual` windows the row list:
+  regardless of whether there are 50 or 50,000 rows, only the ones
+  currently scrolled into view (plus a small overscan buffer) exist as DOM
+  nodes at any moment.
+- **Sorting / filtering / search**: all `@tanstack/react-table` state
+  (`sorting`, `columnFilters`, `globalFilter`) — purely client-side,
+  recomputed from the same in-memory row array, never re-fetched.
+- Deliberately **not** a literal `<table>`/`<tr>`/`<td>` — a sticky header
+  built from real DOM rows and a body of absolutely-positioned virtualized
+  rows can't share native table layout for column alignment, so both are
+  divs sized with matching explicit widths (the same pattern TanStack's own
+  Virtual+Table docs use). The tradeoff is losing some native table a11y
+  semantics in exchange for smooth scrolling at scale.
 
 ## Incremental processing & duplicate prevention
 
@@ -164,6 +216,10 @@ carry forward.
   open workbook.
 - Rows are appended to the in-memory workbook object as results complete;
   nothing is written to disk until the single final `save()`.
+- The worksheet-to-JSON conversion for the preview happens exactly once,
+  after `save()`, from the same in-memory object — not a second file read.
+- The preview itself never re-renders 20,000 DOM rows: `@tanstack/react-virtual`
+  only mounts the rows currently scrolled into view.
 
 ## Error handling
 
