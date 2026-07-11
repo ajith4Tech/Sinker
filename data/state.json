@@ -13,18 +13,39 @@
       "rows": 5,
       "status": "Completed",
       "processed_at": "2026-07-10T17:11:07Z"
+    },
+    "477713206072026INBLR4SB22060720261632.pdf": {
+      "sha256": "3068c844820a25ca3517cd3a0ec07febf52caabc7ba05e43a5ecb6bf715611e6",
+      "size": 521519,
+      "rows": 2,
+      "status": "Completed",
+      "processed_at": "2026-07-10T19:02:44Z"
+    },
+    "454111527062026INBLR4SB22290620262248.pdf": {
+      "sha256": "291d2a7d1e28618cb14e391ff8081661391c65a97637f2d6bcdf6e7f8a5bf665",
+      "size": 516072,
+      "rows": 1,
+      "status": "Completed",
+      "processed_at": "2026-07-10T19:03:20Z"
+    },
+    "477710406072026INBLR4SB22060720261626.pdf": {
+      "sha256": "dbfea2bfe954b1747378093fde9d9f9e2500106431b941279abee6d76cc6183d",
+      "size": 549100,
+      "rows": 5,
+      "status": "Completed",
+      "processed_at": "2026-07-10T19:03:21Z"
     }
   },
   "stats": {
-    "totalPdfsProcessed": 2,
-    "uniquePdfs": 2,
-    "rowsExtracted": 6,
-    "rowsAdded": 6,
-    "duplicatesSkipped": 0,
+    "totalPdfsProcessed": 5,
+    "uniquePdfs": 5,
+    "rowsExtracted": 14,
+    "rowsAdded": 8,
+    "duplicatesSkipped": 6,
     "failedPdfs": 0,
-    "workbookTotalRows": 6,
-    "averageRowsPerPdf": 3.0,
-    "lastExtraction": "2026-07-10T17:12:06Z",
-    "lastProcessingTimeMs": 39
+    "workbookTotalRows": 8,
+    "averageRowsPerPdf": 1.6,
+    "lastExtraction": "2026-07-10T19:03:21Z",
+    "lastProcessingTimeMs": 2422
   }
 }

@@ -42,3 +42,5 @@ venv/
 # scratch space for uploads and generated workbooks (deleted after each run)
 /temp/uploads/
 /temp/output/
+
+.claude/

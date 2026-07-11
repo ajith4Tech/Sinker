@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { copyFile, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -11,7 +12,23 @@ const OUTPUT_ROOT = path.join(TEMP_ROOT, "output");
 const DATA_ROOT = path.join(process.cwd(), "data");
 const DEFAULT_TEMPLATE_PATH = path.join(process.cwd(), "templates", "Book3.xlsx");
 const PARSER_SCRIPT = path.join(process.cwd(), "scripts", "parser.py");
-const PYTHON_BIN = process.env.PYTHON_BIN ?? "python3";
+
+// scripts/requirements.txt (pdfplumber, PyMuPDF, openpyxl) is installed into
+// a project-local venv, never into the system interpreter — see README
+// "Setup". Resolution order: an explicit PYTHON_BIN always wins; otherwise
+// fall back to that venv if one exists on disk (covers deploys where the
+// .env step from the README setup was skipped); otherwise plain "python3"
+// from PATH, same as before.
+function resolvePythonBin(): string {
+  if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
+  for (const venvDir of ["venv", ".venv"]) {
+    const candidate = path.join(process.cwd(), venvDir, "bin", "python3");
+    if (existsSync(candidate)) return candidate;
+  }
+  return "python3";
+}
+
+const PYTHON_BIN = resolvePythonBin();
 
 // The workbook is now persistent server-side state, not a per-run disposable
 // file — every run loads and saves this same path in place. Template

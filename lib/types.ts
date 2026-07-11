@@ -244,3 +244,44 @@ export interface LogEntry {
   completedAt: string | null;
   error: string | null;
 }
+
+// ---------------------------------------------------------------------
+// Processed PDFs tab (GET /api/processed-pdfs) — derived, read-only, from
+// data/logs.json + data/state.json. "Processed" vs "Changed" is worked out
+// from log order (a filename's first Completed entry is "Processed", any
+// later one must be a content change since an unchanged re-upload would
+// have produced a "Skipped" entry instead — see state_store.classify_file).
+// ---------------------------------------------------------------------
+
+export type ProcessedPdfStatus = "Processed" | "Skipped Duplicate" | "Changed" | "Failed";
+
+export interface ProcessedPdfEntry {
+  filename: string;
+  status: ProcessedPdfStatus;
+  rowsExtracted: number;
+  rowsAdded: number;
+  duplicatesSkipped: number;
+  sha256: string | null;
+  processedAt: string | null;
+  lastModified: string | null;
+}
+
+export interface ProcessedPdfsSummary {
+  totalPdfs: number;
+  processed: number;
+  skipped: number;
+  failed: number;
+  changed: number;
+}
+
+// ---------------------------------------------------------------------
+// Persistent workbook preview (GET /api/workbook-preview) — reads
+// data/workbook.xlsx directly via scripts/read_workbook_cli.py, independent
+// of any extraction run, so the preview survives a refresh or restart.
+// ---------------------------------------------------------------------
+
+export interface WorkbookPreviewResponse {
+  workbook: WorkbookModel;
+  totalRows: number;
+  updatedAt: string;
+}

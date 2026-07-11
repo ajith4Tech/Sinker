@@ -16,9 +16,11 @@ import type { CellBorderSide, CellStyle, WorkbookModel } from "@/lib/types";
 export function ExcelPreview({
   workbook,
   newRowNumbers = [],
+  updatedAt = null,
 }: {
   workbook: WorkbookModel;
   newRowNumbers?: number[];
+  updatedAt?: string | null;
 }) {
   const [quickFilter, setQuickFilter] = useState("");
 
@@ -147,6 +149,7 @@ export function ExcelPreview({
           <span className="ml-2 inline-flex items-center gap-1">
             <span className="inline-block h-2.5 w-2.5 rounded-sm bg-green-200 dark:bg-green-900" /> new this session
           </span>
+          {updatedAt && <span className="ml-2">· Last updated {formatUpdatedAt(updatedAt)}</span>}
         </p>
       </div>
 
@@ -200,6 +203,11 @@ function headerRowTop(workbook: WorkbookModel, rowNum: number): number {
   let top = 0;
   for (let r = 1; r < rowNum; r++) top += rowHeightPx(workbook.rowHeights[r - 1]);
   return top;
+}
+
+function formatUpdatedAt(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
 }
 
 function formatValue(value: string | number | null): string {

@@ -43,6 +43,83 @@
       "startedAt": "2026-07-10T17:12:06Z",
       "completedAt": "2026-07-10T17:12:06Z",
       "error": null
+    },
+    {
+      "filename": "477713206072026INBLR4SB22060720261632.pdf",
+      "status": "Completed",
+      "rowsExtracted": 2,
+      "rowsAdded": 2,
+      "duplicatesSkipped": 0,
+      "processingTimeMs": 1104,
+      "startedAt": "2026-07-10T19:02:42Z",
+      "completedAt": "2026-07-10T19:02:44Z",
+      "error": null
+    },
+    {
+      "filename": "sample_single_invoice.pdf",
+      "status": "Skipped",
+      "rowsExtracted": 1,
+      "rowsAdded": 0,
+      "duplicatesSkipped": 0,
+      "processingTimeMs": 0,
+      "startedAt": "2026-07-10T19:02:46Z",
+      "completedAt": "2026-07-10T19:02:46Z",
+      "error": null
+    },
+    {
+      "filename": "sample_multi_invoice.pdf",
+      "status": "Skipped",
+      "rowsExtracted": 5,
+      "rowsAdded": 0,
+      "duplicatesSkipped": 0,
+      "processingTimeMs": 0,
+      "startedAt": "2026-07-10T19:03:00Z",
+      "completedAt": "2026-07-10T19:03:00Z",
+      "error": null
+    },
+    {
+      "filename": "477713206072026INBLR4SB22060720261632.pdf",
+      "status": "Skipped",
+      "rowsExtracted": 2,
+      "rowsAdded": 0,
+      "duplicatesSkipped": 0,
+      "processingTimeMs": 0,
+      "startedAt": "2026-07-10T19:03:19Z",
+      "completedAt": "2026-07-10T19:03:19Z",
+      "error": null
+    },
+    {
+      "filename": "477713206072026INBLR4SB22060720261632.pdf",
+      "status": "Skipped",
+      "rowsExtracted": 2,
+      "rowsAdded": 0,
+      "duplicatesSkipped": 0,
+      "processingTimeMs": 0,
+      "startedAt": "2026-07-10T19:03:19Z",
+      "completedAt": "2026-07-10T19:03:19Z",
+      "error": null
+    },
+    {
+      "filename": "454111527062026INBLR4SB22290620262248.pdf",
+      "status": "Completed",
+      "rowsExtracted": 1,
+      "rowsAdded": 0,
+      "duplicatesSkipped": 1,
+      "processingTimeMs": 1431,
+      "startedAt": "2026-07-10T19:03:19Z",
+      "completedAt": "2026-07-10T19:03:20Z",
+      "error": null
+    },
+    {
+      "filename": "477710406072026INBLR4SB22060720261626.pdf",
+      "status": "Completed",
+      "rowsExtracted": 5,
+      "rowsAdded": 0,
+      "duplicatesSkipped": 5,
+      "processingTimeMs": 2340,
+      "startedAt": "2026-07-10T19:03:19Z",
+      "completedAt": "2026-07-10T19:03:21Z",
+      "error": null
     }
   ]
 }

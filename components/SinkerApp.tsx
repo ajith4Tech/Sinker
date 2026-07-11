@@ -3,11 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { ExtractTab } from "@/components/ExtractTab";
 import { ExcelPreview } from "@/components/ExcelPreview";
 import { DownloadPanel } from "@/components/DownloadPanel";
 import { StatisticsTab } from "@/components/StatisticsTab";
 import { ProcessingLogTab } from "@/components/ProcessingLogTab";
+import { ProcessedPdfsTab } from "@/components/ProcessedPdfsTab";
 import { ErrorsTab, ErrorsTabTrigger } from "@/components/ErrorsTab";
 import type {
   DoneEvent,
@@ -15,8 +17,11 @@ import type {
   FileProgressEvent,
   LogEntry,
   PersistedStats,
+  ProcessedPdfEntry,
+  ProcessedPdfsSummary,
   TotalsProgressEvent,
   UploadSummaryEvent,
+  WorkbookPreviewResponse,
 } from "@/lib/types";
 
 const EMPTY_TOTALS: TotalsProgressEvent = {
@@ -41,6 +46,14 @@ const EMPTY_STATS: PersistedStats = {
   averageRowsPerPdf: 0,
   lastExtraction: null,
   lastProcessingTimeMs: 0,
+};
+
+const EMPTY_PROCESSED_SUMMARY: ProcessedPdfsSummary = {
+  totalPdfs: 0,
+  processed: 0,
+  skipped: 0,
+  failed: 0,
+  changed: 0,
 };
 
 function emptyLogRow(filename: string): LogEntry {
@@ -76,6 +89,13 @@ export function SinkerApp() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [hasWorkbook, setHasWorkbook] = useState<boolean | null>(null);
 
+  const [processedPdfs, setProcessedPdfs] = useState<ProcessedPdfEntry[]>([]);
+  const [processedPdfsSummary, setProcessedPdfsSummary] = useState<ProcessedPdfsSummary>(EMPTY_PROCESSED_SUMMARY);
+  const [processedPdfsLoading, setProcessedPdfsLoading] = useState(true);
+
+  const [workbookPreview, setWorkbookPreview] = useState<WorkbookPreviewResponse | null>(null);
+  const [workbookPreviewLoading, setWorkbookPreviewLoading] = useState(true);
+
   const [activeTab, setActiveTab] = useState("extract");
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -90,22 +110,37 @@ export function SinkerApp() {
   async function refreshPersisted() {
     setLogsLoading(true);
     setStatsLoading(true);
+    setProcessedPdfsLoading(true);
+    setWorkbookPreviewLoading(true);
     try {
-      const [logsRes, stateRes] = await Promise.all([fetch("/api/logs"), fetch("/api/state")]);
+      const [logsRes, stateRes, processedRes, previewRes] = await Promise.all([
+        fetch("/api/logs"),
+        fetch("/api/state"),
+        fetch("/api/processed-pdfs"),
+        fetch("/api/workbook-preview"),
+      ]);
       const logsData = await logsRes.json();
       const stateData = await stateRes.json();
+      const processedData = await processedRes.json();
+      const previewData = await previewRes.json();
       setPersistedLogs(Array.isArray(logsData.logs) ? logsData.logs : []);
       setStats({ ...EMPTY_STATS, ...stateData.stats });
       setHasWorkbook(Boolean(stateData.hasWorkbook));
+      setProcessedPdfs(Array.isArray(processedData.entries) ? processedData.entries : []);
+      setProcessedPdfsSummary({ ...EMPTY_PROCESSED_SUMMARY, ...processedData.summary });
+      setWorkbookPreview(previewData.workbook ? previewData : null);
     } finally {
       setLogsLoading(false);
       setStatsLoading(false);
+      setProcessedPdfsLoading(false);
+      setWorkbookPreviewLoading(false);
     }
   }
 
-  // Loads persisted history/stats once on mount — Statistics and Processing
-  // Log must survive a refresh, so they're seeded from the server, never
-  // from in-memory state that a reload would wipe.
+  // Loads persisted history/stats/workbook preview once on page load —
+  // Statistics, Processing Log, Processed PDFs, and Excel Preview must all
+  // survive a refresh or a server restart, so they're seeded from the
+  // server here, never from in-memory state that a reload would wipe.
   useEffect(() => {
     refreshPersisted();
   }, []);
@@ -222,6 +257,7 @@ export function SinkerApp() {
           <TabsTrigger value="extract">Extract</TabsTrigger>
           <TabsTrigger value="preview">Excel Preview</TabsTrigger>
           <TabsTrigger value="stats">Statistics</TabsTrigger>
+          <TabsTrigger value="processed">Processed PDFs</TabsTrigger>
           <TabsTrigger value="log">Processing Log</TabsTrigger>
           {hasFailures && (
             <TabsTrigger value="errors">
@@ -251,18 +287,29 @@ export function SinkerApp() {
         </TabsContent>
 
         <TabsContent value="preview" className="flex flex-col gap-3 pt-6">
-          {result ? (
+          {result && !result.validation.ok && (
+            <p className="rounded border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              Validation found a mismatch between the parser output and the saved workbook — see the server log for
+              details ({result.validation.incorrectFields.length} incorrect field(s),{" "}
+              {result.validation.blankMandatoryFields.length} blank mandatory field(s),{" "}
+              {result.validation.shiftedColumns.length} shifted column(s)).
+            </p>
+          )}
+          {workbookPreviewLoading && !workbookPreview ? (
+            <p className="text-sm text-muted-foreground">Loading workbook preview…</p>
+          ) : workbookPreview ? (
             <>
-              {!result.validation.ok && (
-                <p className="rounded border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  Validation found a mismatch between the parser output and the saved workbook — see the server log
-                  for details ({result.validation.incorrectFields.length} incorrect field(s),{" "}
-                  {result.validation.blankMandatoryFields.length} blank mandatory field(s),{" "}
-                  {result.validation.shiftedColumns.length} shifted column(s)).
-                </p>
-              )}
-              <ExcelPreview workbook={result.workbook} newRowNumbers={result.newRowNumbers} />
-              <DownloadPanel downloadUrl={result.downloadUrl} errorReportUrl={result.errorReportUrl} />
+              <div className="flex justify-end">
+                <Button variant="outline" size="sm" onClick={refreshPersisted}>
+                  Refresh
+                </Button>
+              </div>
+              <ExcelPreview
+                workbook={workbookPreview.workbook}
+                newRowNumbers={result?.newRowNumbers ?? []}
+                updatedAt={workbookPreview.updatedAt}
+              />
+              <DownloadPanel downloadUrl="/api/download/workbook" errorReportUrl={result?.errorReportUrl ?? null} />
             </>
           ) : (
             <p className="text-sm text-muted-foreground">Run an extraction to preview the workbook.</p>
@@ -271,6 +318,10 @@ export function SinkerApp() {
 
         <TabsContent value="stats" className="pt-6">
           <StatisticsTab stats={stats} loading={statsLoading} />
+        </TabsContent>
+
+        <TabsContent value="processed" className="pt-6">
+          <ProcessedPdfsTab entries={processedPdfs} summary={processedPdfsSummary} loading={processedPdfsLoading} />
         </TabsContent>
 
         <TabsContent value="log" className="pt-6">
